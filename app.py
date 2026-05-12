@@ -28,7 +28,7 @@ st.markdown("""
 <style>
 
 .main {
-    background-color: #0b1020;
+    background-color: #050816;
     color: white;
 }
 
@@ -38,12 +38,12 @@ st.markdown("""
 }
 
 div[data-testid="metric-container"] {
-    background: linear-gradient(135deg, #111827, #1f2937);
-    border: 1px solid #374151;
+    background: linear-gradient(135deg, #0f172a, #111827);
+    border: 1px solid #1e293b;
     padding: 20px;
-    border-radius: 18px;
+    border-radius: 20px;
     text-align: center;
-    box-shadow: 0px 0px 15px rgba(0,0,0,0.35);
+    box-shadow: 0px 0px 20px rgba(0,0,0,0.35);
 }
 
 div[data-testid="metric-container"] label {
@@ -63,10 +63,10 @@ div[data-testid="metric-container"] label {
 }
 
 .screenshot-box {
-    background: linear-gradient(135deg, #0f172a, #111827);
+    background: linear-gradient(135deg, #081028, #0b1220);
     padding: 25px;
     border-radius: 25px;
-    border: 1px solid #334155;
+    border: 1px solid #1e3a5f;
     margin-bottom: 20px;
 }
 
@@ -98,7 +98,7 @@ with col_title:
 # AUTO NAV FETCH
 # =========================
 
-mf_api = "https://api.mfapi.in/mf/152189"
+mf_api = "https://api.mfapi.in/mf/146139"
 
 data = requests.get(mf_api).json()
 
@@ -276,18 +276,10 @@ st.markdown('<div class="screenshot-box">', unsafe_allow_html=True)
 
 col1, col2, col3, col4 = st.columns(4)
 
-# =========================
-# PREVIOUS NAV
-# =========================
-
 col1.metric(
     "Previous NAV",
     f"{previous_nav:.2f}"
 )
-
-# =========================
-# EXPECTED NAV
-# =========================
 
 col2.metric(
     "Expected NAV",
@@ -295,19 +287,11 @@ col2.metric(
     f"{total_weighted_return:.2f}%"
 )
 
-# =========================
-# WEEKLY CHANGE
-# =========================
-
 col3.metric(
     "📅 Weekly Change",
     f"{weekly_change:.2f}%",
     f"{weekly_nav_change:.2f} NAV"
 )
-
-# =========================
-# DAILY CHANGE
-# =========================
 
 col4.metric(
     "📈 Daily Change",
