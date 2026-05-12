@@ -102,9 +102,14 @@ mf_api = "https://api.mfapi.in/mf/146139"
 
 data = requests.get(mf_api).json()
 
-previous_nav = float(data["data"][0]["nav"])
+nav_data = data["data"]
 
-weekly_start_nav = float(data["data"][5]["nav"])
+previous_nav = float(nav_data[0]["nav"])
+
+if len(nav_data) > 5:
+    weekly_start_nav = float(nav_data[5]["nav"])
+else:
+    weekly_start_nav = previous_nav
 
 # =========================
 # PORTFOLIO HOLDINGS
