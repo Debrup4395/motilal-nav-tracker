@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import requests
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # =========================
 # AUTO REFRESH EVERY 30 SEC
@@ -70,8 +70,32 @@ div[data-testid="metric-container"] label {
     margin-bottom: 20px;
 }
 
+.gainer-box {
+    background: rgba(34,197,94,0.12);
+    border: 1px solid rgba(34,197,94,0.35);
+    padding: 12px;
+    border-radius: 14px;
+    margin-bottom: 10px;
+}
+
+.loser-box {
+    background: rgba(239,68,68,0.12);
+    border: 1px solid rgba(239,68,68,0.35);
+    padding: 12px;
+    border-radius: 14px;
+    margin-bottom: 10px;
+}
+
 </style>
 """, unsafe_allow_html=True)
+
+# =========================
+# INDIAN TIME
+# =========================
+
+india_time = datetime.now(
+    ZoneInfo("Asia/Kolkata")
+).strftime("%d %b %Y | %I:%M:%S %p")
 
 # =========================
 # LOGO + TITLE
@@ -90,26 +114,16 @@ with col_title:
     )
 
     st.markdown(
-        f'<div class="timestamp">Last Updated: {datetime.now().strftime("%d %b %Y | %I:%M:%S %p")}</div>',
+        f'<div class="timestamp">Last Updated: {india_time}</div>',
         unsafe_allow_html=True
     )
 
 # =========================
-# AUTO NAV FETCH
+# MANUAL NAV UPDATE
 # =========================
 
-mf_api = "https://api.mfapi.in/mf/146139"
-
-data = requests.get(mf_api).json()
-
-nav_data = data["data"]
-
-previous_nav = float(nav_data[0]["nav"])
-
-if len(nav_data) > 5:
-    weekly_start_nav = float(nav_data[5]["nav"])
-else:
-    weekly_start_nav = previous_nav
+previous_nav = 106.71
+weekly_start_nav = 108.67
 
 # =========================
 # PORTFOLIO HOLDINGS
@@ -239,11 +253,18 @@ weekly_nav_change = (
 )
 
 # =========================
-# TOP GAINER & LOSER
+# SORT GAINERS & LOSERS
 # =========================
 
-top_gainer = df.loc[df["% Change"].idxmax()]
-top_loser = df.loc[df["% Change"].idxmin()]
+top_gainers = df.sort_values(
+    by="% Change",
+    ascending=False
+).head(5)
+
+top_losers = df.sort_values(
+    by="% Change",
+    ascending=True
+).head(5)
 
 # =========================
 # CONDITIONAL COLORS
@@ -274,7 +295,7 @@ styled_df = df.style.format({
 )
 
 # =========================
-# SCREENSHOT SECTION
+# MAIN METRICS
 # =========================
 
 st.markdown('<div class="screenshot-box">', unsafe_allow_html=True)
@@ -306,22 +327,38 @@ col4.metric(
 st.markdown("---")
 
 # =========================
-# TOP GAINER & LOSER
+# TOP 5 GAINERS & LOSERS
 # =========================
 
 col5, col6 = st.columns(2)
 
-col5.metric(
-    "🚀 Top Gainer",
-    f"{top_gainer['Stock']} ({top_gainer['Weight %']:.2f}%)",
-    f"{top_gainer['% Change']:.2f}%"
-)
+with col5:
 
-col6.metric(
-    "🔻 Top Loser",
-    f"{top_loser['Stock']} ({top_loser['Weight %']:.2f}%)",
-    f"{top_loser['% Change']:.2f}%"
-)
+    st.subheader("🚀 Top 5 Gainers")
+
+    for _, row in top_gainers.iterrows():
+
+        st.markdown(f"""
+        <div class="gainer-box">
+        <b>{row['Stock']}</b> ({row['Weight %']:.2f}%)
+        <br>
+        {row['% Change']:.2f}%
+        </div>
+        """, unsafe_allow_html=True)
+
+with col6:
+
+    st.subheader("🔻 Top 5 Losers")
+
+    for _, row in top_losers.iterrows():
+
+        st.markdown(f"""
+        <div class="loser-box">
+        <b>{row['Stock']}</b> ({row['Weight %']:.2f}%)
+        <br>
+        {row['% Change']:.2f}%
+        </div>
+        """, unsafe_allow_html=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
