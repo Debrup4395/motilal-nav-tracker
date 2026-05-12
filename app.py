@@ -86,18 +86,6 @@ div[data-testid="metric-container"] label {
     margin-bottom: 10px;
 }
 
-.watermark {
-    position: fixed;
-    bottom: 15px;
-    right: 20px;
-    opacity: 0.18;
-    font-size: 22px;
-    font-weight: bold;
-    color: white;
-    z-index: 9999;
-    pointer-events: none;
-}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -122,6 +110,11 @@ with col_title:
 
     st.markdown(
         '<div class="big-title">🔥 Motilal Oswal Midcap Fund NAV Tracker</div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        '<div style="font-size:18px; color:#60a5fa; font-weight:bold; margin-top:-8px;">© Debrup Bera</div>',
         unsafe_allow_html=True
     )
 
@@ -390,13 +383,4 @@ st.dataframe(
 
 st.markdown("---")
 
-# =========================
-# WATERMARK
-# =========================
-
-st.markdown(
-    '<div class="watermark">© Debrup Bera</div>',
-    unsafe_allow_html=True
-)
-
-st.caption("Auto-refresh every 30 seconds")
+st.caption("© Debrup Bera | Auto-refresh every 30 seconds")
