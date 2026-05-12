@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import requests
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 
@@ -94,6 +95,18 @@ with col_title:
     )
 
 # =========================
+# AUTO NAV FETCH
+# =========================
+
+mf_api = "https://api.mfapi.in/mf/152189"
+
+data = requests.get(mf_api).json()
+
+previous_nav = float(data["data"][0]["nav"])
+
+weekly_start_nav = float(data["data"][5]["nav"])
+
+# =========================
 # PORTFOLIO HOLDINGS
 # =========================
 
@@ -128,13 +141,6 @@ stocks = [
     ("AUBANK", 1.01)
 
 ]
-
-# =========================
-# SETTINGS
-# =========================
-
-previous_nav = 106.71
-weekly_start_nav = 108.6668
 
 # =========================
 # FETCH LIVE DATA
