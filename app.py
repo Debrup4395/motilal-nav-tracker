@@ -86,6 +86,18 @@ div[data-testid="metric-container"] label {
     margin-bottom: 10px;
 }
 
+.watermark {
+    position: fixed;
+    bottom: 15px;
+    right: 20px;
+    opacity: 0.18;
+    font-size: 22px;
+    font-weight: bold;
+    color: white;
+    z-index: 9999;
+    pointer-events: none;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -377,5 +389,14 @@ st.dataframe(
 )
 
 st.markdown("---")
+
+# =========================
+# WATERMARK
+# =========================
+
+st.markdown(
+    '<div class="watermark">© Debrup Bera</div>',
+    unsafe_allow_html=True
+)
 
 st.caption("Auto-refresh every 30 seconds")
