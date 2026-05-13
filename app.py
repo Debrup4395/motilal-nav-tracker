@@ -131,16 +131,16 @@ previous_nav = 103.52
 weekly_start_nav = 108.67
 
 # =========================
-# YOUR INVESTMENT
-# =========================
-
-total_investment = 4284000
-
-# =========================
 # INVESTMENT DETAILS
 # =========================
 
 avg_nav = 117.70
+
+total_units = 36529.698
+
+total_investment = (
+    total_units * avg_nav
+)
 
 investment_date = datetime(
     2024,
@@ -422,11 +422,16 @@ col7.metric(
 
 st.markdown("---")
 
-col8 = st.columns(1)[0]
+col8, col9 = st.columns(2)
 
 col8.metric(
     "⏳ Investment Time",
     investment_duration
+)
+
+col9.metric(
+    "🧾 Total Units",
+    f"{total_units:,.3f}"
 )
 
 st.markdown("---")
@@ -435,9 +440,9 @@ st.markdown("---")
 # TOP 5 GAINERS
 # =========================
 
-col9, col10 = st.columns(2)
+col10, col11 = st.columns(2)
 
-with col9:
+with col10:
 
     st.subheader("🚀 Top 5 Gainers")
 
@@ -455,7 +460,7 @@ with col9:
 # TOP 5 LOSERS
 # =========================
 
-with col10:
+with col11:
 
     st.subheader("🔻 Top 5 Losers")
 
