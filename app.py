@@ -3,7 +3,6 @@ import pandas as pd
 import yfinance as yf
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 # =========================
 # AUTO REFRESH EVERY 05 SEC
@@ -28,7 +27,7 @@ st.markdown("""
 <style>
 
 .main {
-    background-color: #050816;
+    background-color: #0b1020;
     color: white;
 }
 
@@ -38,12 +37,12 @@ st.markdown("""
 }
 
 div[data-testid="metric-container"] {
-    background: linear-gradient(135deg, #0f172a, #111827);
-    border: 1px solid #1e293b;
+    background: linear-gradient(135deg, #111827, #1f2937);
+    border: 1px solid #374151;
     padding: 20px;
-    border-radius: 20px;
+    border-radius: 18px;
     text-align: center;
-    box-shadow: 0px 0px 20px rgba(0,0,0,0.35);
+    box-shadow: 0px 0px 15px rgba(0,0,0,0.35);
 }
 
 div[data-testid="metric-container"] label {
@@ -63,39 +62,36 @@ div[data-testid="metric-container"] label {
 }
 
 .screenshot-box {
-    background: linear-gradient(135deg, #081028, #0b1220);
+    background: linear-gradient(135deg, #0f172a, #111827);
     padding: 25px;
     border-radius: 25px;
-    border: 1px solid #1e3a5f;
+    border: 1px solid #334155;
     margin-bottom: 20px;
 }
 
-.gainer-box {
-    background: rgba(34,197,94,0.12);
-    border: 1px solid rgba(34,197,94,0.35);
-    padding: 12px;
-    border-radius: 14px;
+.return-title {
+    color: #cbd5e1;
+    font-size: 15px;
     margin-bottom: 10px;
 }
 
-.loser-box {
-    background: rgba(239,68,68,0.12);
-    border: 1px solid rgba(239,68,68,0.35);
-    padding: 12px;
-    border-radius: 14px;
-    margin-bottom: 10px;
+.return-value {
+    font-size: 28px;
+    font-weight: bold;
+    color: white;
+    line-height: 1.2;
+}
+
+.eye-btn button {
+    background: transparent !important;
+    border: none !important;
+    color: white !important;
+    font-size: 22px !important;
+    padding: 0px !important;
 }
 
 </style>
 """, unsafe_allow_html=True)
-
-# =========================
-# INDIAN TIME
-# =========================
-
-india_time = datetime.now(
-    ZoneInfo("Asia/Kolkata")
-).strftime("%d %b %Y | %I:%M:%S %p")
 
 # =========================
 # LOGO + TITLE
@@ -114,21 +110,9 @@ with col_title:
     )
 
     st.markdown(
-        '<div style="font-size:18px; color:#60a5fa; font-weight:bold; margin-top:-8px;">© Debrup Bera</div>',
+        f'<div class="timestamp">Last Updated: {datetime.now().strftime("%d %b %Y | %I:%M:%S %p")}</div>',
         unsafe_allow_html=True
     )
-
-    st.markdown(
-        f'<div class="timestamp">Last Updated: {india_time}</div>',
-        unsafe_allow_html=True
-    )
-
-# =========================
-# MANUAL NAV UPDATE
-# =========================
-
-previous_nav = 103.52
-weekly_start_nav = 108.67
 
 # =========================
 # PORTFOLIO HOLDINGS
@@ -167,6 +151,14 @@ stocks = [
 ]
 
 # =========================
+# SETTINGS
+# =========================
+
+previous_nav = 103.52
+weekly_start_nav = 108.6668
+total_units = 36398.79
+
+# =========================
 # FETCH LIVE DATA
 # =========================
 
@@ -182,7 +174,7 @@ for symbol, weight in stocks:
 
         stock = yf.Ticker(ticker)
 
-        hist = stock.history(period="5d", interval="1d")
+        hist = stock.history(period="2d")
 
         prev_close = hist["Close"].iloc[-2]
         live_price = hist["Close"].iloc[-1]
@@ -248,6 +240,14 @@ estimated_nav = previous_nav * (
     1 + total_weighted_return / 100
 )
 
+daily_nav_change = (
+    estimated_nav - previous_nav
+)
+
+daily_profit_loss = (
+    daily_nav_change * total_units
+)
+
 weekly_change = (
     (estimated_nav - weekly_start_nav)
     / weekly_start_nav
@@ -257,19 +257,16 @@ weekly_nav_change = (
     estimated_nav - weekly_start_nav
 )
 
+weekly_profit_loss = (
+    weekly_nav_change * total_units
+)
+
 # =========================
-# SORT GAINERS & LOSERS
+# TOP GAINER & LOSER
 # =========================
 
-top_gainers = df.sort_values(
-    by="% Change",
-    ascending=False
-).head(5)
-
-top_losers = df.sort_values(
-    by="% Change",
-    ascending=True
-).head(5)
+top_gainer = df.loc[df["% Change"].idxmax()]
+top_loser = df.loc[df["% Change"].idxmin()]
 
 # =========================
 # CONDITIONAL COLORS
@@ -300,17 +297,35 @@ styled_df = df.style.format({
 )
 
 # =========================
-# MAIN METRICS
+# SESSION STATES
+# =========================
+
+if "show_daily_pl" not in st.session_state:
+    st.session_state.show_daily_pl = True
+
+if "show_weekly_pl" not in st.session_state:
+    st.session_state.show_weekly_pl = True
+
+# =========================
+# SCREENSHOT SECTION
 # =========================
 
 st.markdown('<div class="screenshot-box">', unsafe_allow_html=True)
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5, col6 = st.columns(6)
+
+# =========================
+# PREVIOUS NAV
+# =========================
 
 col1.metric(
     "Previous NAV",
     f"{previous_nav:.2f}"
 )
+
+# =========================
+# EXPECTED NAV
+# =========================
 
 col2.metric(
     "Expected NAV",
@@ -318,52 +333,98 @@ col2.metric(
     f"{total_weighted_return:.2f}%"
 )
 
+# =========================
+# WEEKLY CHANGE
+# =========================
+
 col3.metric(
     "📅 Weekly Change",
     f"{weekly_change:.2f}%",
     f"{weekly_nav_change:.2f} NAV"
 )
 
+# =========================
+# DAILY CHANGE
+# =========================
+
 col4.metric(
     "📈 Daily Change",
     f"{total_weighted_return:.2f}%"
 )
 
+# =========================
+# DAILY RETURN
+# =========================
+
+if st.session_state.show_daily_pl:
+    daily_text = f"₹{daily_profit_loss:,.2f}"
+    daily_eye = "👁"
+else:
+    daily_text = "******"
+    daily_eye = "🙈"
+
+col5.markdown(f"""
+<div class="return-title">💰 Daily Return</div>
+
+<div class="return-value">
+{daily_text}
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown('<div class="eye-btn">', unsafe_allow_html=True)
+
+if col5.button(daily_eye, key="daily_return_btn"):
+    st.session_state.show_daily_pl = not st.session_state.show_daily_pl
+    st.rerun()
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+# =========================
+# WEEKLY RETURN
+# =========================
+
+if st.session_state.show_weekly_pl:
+    weekly_text = f"₹{weekly_profit_loss:,.2f}"
+    weekly_eye = "👁"
+else:
+    weekly_text = "******"
+    weekly_eye = "🙈"
+
+col6.markdown(f"""
+<div class="return-title">💵 Weekly Return</div>
+
+<div class="return-value">
+{weekly_text}
+</div>
+""", unsafe_allow_html=True)
+
+st.markdown('<div class="eye-btn">', unsafe_allow_html=True)
+
+if col6.button(weekly_eye, key="weekly_return_btn"):
+    st.session_state.show_weekly_pl = not st.session_state.show_weekly_pl
+    st.rerun()
+
+st.markdown('</div>', unsafe_allow_html=True)
+
 st.markdown("---")
 
 # =========================
-# TOP 5 GAINERS & LOSERS
+# TOP GAINER & LOSER
 # =========================
 
-col5, col6 = st.columns(2)
+col7, col8 = st.columns(2)
 
-with col5:
+col7.metric(
+    "🚀 Top Gainer",
+    f"{top_gainer['Stock']} ({top_gainer['Weight %']:.2f}%)",
+    f"{top_gainer['% Change']:.2f}%"
+)
 
-    st.subheader("🚀 Top 5 Gainers")
-
-    for _, row in top_gainers.iterrows():
-
-        st.markdown(f"""
-        <div class="gainer-box">
-        <b>{row['Stock']}</b> ({row['Weight %']:.2f}%)
-        <br>
-        {row['% Change']:.2f}%
-        </div>
-        """, unsafe_allow_html=True)
-
-with col6:
-
-    st.subheader("🔻 Top 5 Losers")
-
-    for _, row in top_losers.iterrows():
-
-        st.markdown(f"""
-        <div class="loser-box">
-        <b>{row['Stock']}</b> ({row['Weight %']:.2f}%)
-        <br>
-        {row['% Change']:.2f}%
-        </div>
-        """, unsafe_allow_html=True)
+col8.metric(
+    "🔻 Top Loser",
+    f"{top_loser['Stock']} ({top_loser['Weight %']:.2f}%)",
+    f"{top_loser['% Change']:.2f}%"
+)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -383,4 +444,4 @@ st.dataframe(
 
 st.markdown("---")
 
-st.caption("© Debrup Bera | Auto-refresh every 05 seconds")
+st.caption("Auto-refresh every 05 seconds")
