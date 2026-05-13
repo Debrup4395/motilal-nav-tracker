@@ -131,6 +131,12 @@ previous_nav = 103.52
 weekly_start_nav = 108.67
 
 # =========================
+# YOUR INVESTMENT
+# =========================
+
+total_investment = 4284000
+
+# =========================
 # INVESTMENT DETAILS
 # =========================
 
@@ -301,6 +307,28 @@ unrealised_pl_pct = (
 ) * 100
 
 # =========================
+# AMOUNT CALCULATIONS
+# =========================
+
+daily_return_amount = (
+    total_investment
+    * total_weighted_return
+    / 100
+)
+
+weekly_return_amount = (
+    total_investment
+    * weekly_change
+    / 100
+)
+
+unrealised_pl_amount = (
+    total_investment
+    * unrealised_pl_pct
+    / 100
+)
+
+# =========================
 # TOP 5 GAINERS & LOSERS
 # =========================
 
@@ -348,7 +376,7 @@ styled_df = df.style.format({
 
 st.markdown('<div class="screenshot-box">', unsafe_allow_html=True)
 
-col1, col2, col3, col4, col5, col6 = st.columns(6)
+col1, col2, col3, col4 = st.columns(4)
 
 col1.metric(
     "Previous NAV",
@@ -372,14 +400,33 @@ col4.metric(
     f"{total_weighted_return:.2f}%"
 )
 
+st.markdown("---")
+
+col5, col6, col7 = st.columns(3)
+
 col5.metric(
-    "⏳ Investment Time",
-    investment_duration
+    "💰 Daily Return",
+    f"₹{daily_return_amount:,.0f}"
 )
 
 col6.metric(
+    "💵 Weekly Return",
+    f"₹{weekly_return_amount:,.0f}"
+)
+
+col7.metric(
     "💼 Unrealised P/L",
+    f"₹{unrealised_pl_amount:,.0f}",
     f"{unrealised_pl_pct:.2f}%"
+)
+
+st.markdown("---")
+
+col8 = st.columns(1)[0]
+
+col8.metric(
+    "⏳ Investment Time",
+    investment_duration
 )
 
 st.markdown("---")
@@ -388,9 +435,9 @@ st.markdown("---")
 # TOP 5 GAINERS
 # =========================
 
-col7, col8 = st.columns(2)
+col9, col10 = st.columns(2)
 
-with col7:
+with col9:
 
     st.subheader("🚀 Top 5 Gainers")
 
@@ -408,7 +455,7 @@ with col7:
 # TOP 5 LOSERS
 # =========================
 
-with col8:
+with col10:
 
     st.subheader("🔻 Top 5 Losers")
 
