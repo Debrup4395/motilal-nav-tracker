@@ -6,10 +6,10 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # =========================
-# AUTO REFRESH EVERY 20 SEC
+# AUTO REFRESH EVERY 10 SEC
 # =========================
 
-st_autorefresh(interval=20000, key="refresh")
+st_autorefresh(interval=10000, key="refresh")
 
 # =========================
 # PAGE SETTINGS
@@ -383,4 +383,4 @@ st.dataframe(
 
 st.markdown("---")
 
-st.caption("© Debrup Bera | Auto-refresh every 20 seconds")
+st.caption("© Debrup Bera | Auto-refresh every 10 seconds")
