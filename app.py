@@ -3,6 +3,7 @@ import pandas as pd
 import yfinance as yf
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # =========================
 # AUTO REFRESH EVERY 05 SEC
@@ -27,7 +28,7 @@ st.markdown("""
 <style>
 
 .main {
-    background-color: #0b1020;
+    background-color: #050816;
     color: white;
 }
 
@@ -69,29 +70,32 @@ div[data-testid="metric-container"] label {
     margin-bottom: 20px;
 }
 
-.return-title {
-    color: #cbd5e1;
-    font-size: 15px;
+.gainer-box {
+    background: rgba(34,197,94,0.12);
+    border: 1px solid rgba(34,197,94,0.35);
+    padding: 12px;
+    border-radius: 14px;
     margin-bottom: 10px;
 }
 
-.return-value {
-    font-size: 28px;
-    font-weight: bold;
-    color: white;
-    line-height: 1.2;
-}
-
-.eye-btn button {
-    background: transparent !important;
-    border: none !important;
-    color: white !important;
-    font-size: 22px !important;
-    padding: 0px !important;
+.loser-box {
+    background: rgba(239,68,68,0.12);
+    border: 1px solid rgba(239,68,68,0.35);
+    padding: 12px;
+    border-radius: 14px;
+    margin-bottom: 10px;
 }
 
 </style>
 """, unsafe_allow_html=True)
+
+# =========================
+# INDIAN TIME
+# =========================
+
+india_time = datetime.now(
+    ZoneInfo("Asia/Kolkata")
+).strftime("%d %b %Y | %I:%M:%S %p")
 
 # =========================
 # LOGO + TITLE
@@ -110,9 +114,51 @@ with col_title:
     )
 
     st.markdown(
-        f'<div class="timestamp">Last Updated: {datetime.now().strftime("%d %b %Y | %I:%M:%S %p")}</div>',
+        '<div style="font-size:18px; color:#60a5fa; font-weight:bold; margin-top:-8px;">© Debrup Bera</div>',
         unsafe_allow_html=True
     )
+
+    st.markdown(
+        f'<div class="timestamp">Last Updated: {india_time}</div>',
+        unsafe_allow_html=True
+    )
+
+# =========================
+# MANUAL NAV UPDATE
+# =========================
+
+previous_nav = 103.52
+weekly_start_nav = 108.67
+
+# =========================
+# INVESTMENT DETAILS
+# =========================
+
+avg_nav = 117.70
+
+investment_date = datetime(
+    2024,
+    9,
+    2
+)
+
+today_date = datetime.now()
+
+total_days = (
+    today_date - investment_date
+).days
+
+years = total_days // 365
+
+remaining_days = total_days % 365
+
+months = remaining_days // 30
+
+days = remaining_days % 30
+
+investment_duration = (
+    f"{years}Y {months}M {days}D"
+)
 
 # =========================
 # PORTFOLIO HOLDINGS
@@ -151,14 +197,6 @@ stocks = [
 ]
 
 # =========================
-# SETTINGS
-# =========================
-
-previous_nav = 103.52
-weekly_start_nav = 108.6668
-total_units = 36398.79
-
-# =========================
 # FETCH LIVE DATA
 # =========================
 
@@ -174,7 +212,7 @@ for symbol, weight in stocks:
 
         stock = yf.Ticker(ticker)
 
-        hist = stock.history(period="2d")
+        hist = stock.history(period="5d", interval="1d")
 
         prev_close = hist["Close"].iloc[-2]
         live_price = hist["Close"].iloc[-1]
@@ -244,10 +282,6 @@ daily_nav_change = (
     estimated_nav - previous_nav
 )
 
-daily_profit_loss = (
-    daily_nav_change * total_units
-)
-
 weekly_change = (
     (estimated_nav - weekly_start_nav)
     / weekly_start_nav
@@ -257,16 +291,28 @@ weekly_nav_change = (
     estimated_nav - weekly_start_nav
 )
 
-weekly_profit_loss = (
-    weekly_nav_change * total_units
-)
-
 # =========================
-# TOP GAINER & LOSER
+# UNREALISED PROFIT / LOSS
 # =========================
 
-top_gainer = df.loc[df["% Change"].idxmax()]
-top_loser = df.loc[df["% Change"].idxmin()]
+unrealised_pl_pct = (
+    (estimated_nav - avg_nav)
+    / avg_nav
+) * 100
+
+# =========================
+# TOP 5 GAINERS & LOSERS
+# =========================
+
+top_gainers = df.sort_values(
+    by="% Change",
+    ascending=False
+).head(5)
+
+top_losers = df.sort_values(
+    by="% Change",
+    ascending=True
+).head(5)
 
 # =========================
 # CONDITIONAL COLORS
@@ -297,16 +343,6 @@ styled_df = df.style.format({
 )
 
 # =========================
-# SESSION STATES
-# =========================
-
-if "show_daily_pl" not in st.session_state:
-    st.session_state.show_daily_pl = True
-
-if "show_weekly_pl" not in st.session_state:
-    st.session_state.show_weekly_pl = True
-
-# =========================
 # SCREENSHOT SECTION
 # =========================
 
@@ -314,18 +350,10 @@ st.markdown('<div class="screenshot-box">', unsafe_allow_html=True)
 
 col1, col2, col3, col4, col5, col6 = st.columns(6)
 
-# =========================
-# PREVIOUS NAV
-# =========================
-
 col1.metric(
     "Previous NAV",
     f"{previous_nav:.2f}"
 )
-
-# =========================
-# EXPECTED NAV
-# =========================
 
 col2.metric(
     "Expected NAV",
@@ -333,98 +361,66 @@ col2.metric(
     f"{total_weighted_return:.2f}%"
 )
 
-# =========================
-# WEEKLY CHANGE
-# =========================
-
 col3.metric(
     "📅 Weekly Change",
     f"{weekly_change:.2f}%",
     f"{weekly_nav_change:.2f} NAV"
 )
 
-# =========================
-# DAILY CHANGE
-# =========================
-
 col4.metric(
     "📈 Daily Change",
     f"{total_weighted_return:.2f}%"
 )
 
-# =========================
-# DAILY RETURN
-# =========================
+col5.metric(
+    "⏳ Investment Time",
+    investment_duration
+)
 
-if st.session_state.show_daily_pl:
-    daily_text = f"₹{daily_profit_loss:,.2f}"
-    daily_eye = "👁"
-else:
-    daily_text = "******"
-    daily_eye = "🙈"
-
-col5.markdown(f"""
-<div class="return-title">💰 Daily Return</div>
-
-<div class="return-value">
-{daily_text}
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown('<div class="eye-btn">', unsafe_allow_html=True)
-
-if col5.button(daily_eye, key="daily_return_btn"):
-    st.session_state.show_daily_pl = not st.session_state.show_daily_pl
-    st.rerun()
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-# =========================
-# WEEKLY RETURN
-# =========================
-
-if st.session_state.show_weekly_pl:
-    weekly_text = f"₹{weekly_profit_loss:,.2f}"
-    weekly_eye = "👁"
-else:
-    weekly_text = "******"
-    weekly_eye = "🙈"
-
-col6.markdown(f"""
-<div class="return-title">💵 Weekly Return</div>
-
-<div class="return-value">
-{weekly_text}
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown('<div class="eye-btn">', unsafe_allow_html=True)
-
-if col6.button(weekly_eye, key="weekly_return_btn"):
-    st.session_state.show_weekly_pl = not st.session_state.show_weekly_pl
-    st.rerun()
-
-st.markdown('</div>', unsafe_allow_html=True)
+col6.metric(
+    "💼 Unrealised P/L",
+    f"{unrealised_pl_pct:.2f}%"
+)
 
 st.markdown("---")
 
 # =========================
-# TOP GAINER & LOSER
+# TOP 5 GAINERS
 # =========================
 
 col7, col8 = st.columns(2)
 
-col7.metric(
-    "🚀 Top Gainer",
-    f"{top_gainer['Stock']} ({top_gainer['Weight %']:.2f}%)",
-    f"{top_gainer['% Change']:.2f}%"
-)
+with col7:
 
-col8.metric(
-    "🔻 Top Loser",
-    f"{top_loser['Stock']} ({top_loser['Weight %']:.2f}%)",
-    f"{top_loser['% Change']:.2f}%"
-)
+    st.subheader("🚀 Top 5 Gainers")
+
+    for _, row in top_gainers.iterrows():
+
+        st.markdown(f"""
+        <div class="gainer-box">
+        <b>{row['Stock']}</b> ({row['Weight %']:.2f}%)
+        <br>
+        {row['% Change']:.2f}%
+        </div>
+        """, unsafe_allow_html=True)
+
+# =========================
+# TOP 5 LOSERS
+# =========================
+
+with col8:
+
+    st.subheader("🔻 Top 5 Losers")
+
+    for _, row in top_losers.iterrows():
+
+        st.markdown(f"""
+        <div class="loser-box">
+        <b>{row['Stock']}</b> ({row['Weight %']:.2f}%)
+        <br>
+        {row['% Change']:.2f}%
+        </div>
+        """, unsafe_allow_html=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -444,4 +440,4 @@ st.dataframe(
 
 st.markdown("---")
 
-st.caption("Auto-refresh every 05 seconds")
+st.caption("© Debrup Bera | Auto-refresh every 05 seconds")
