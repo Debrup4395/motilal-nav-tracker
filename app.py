@@ -82,6 +82,48 @@ html, body, [class*="css"] {
 .last-updated { font-size: 12px; color: #64748b; }
 .author-tag { font-size: 11px; color: #3b82f6; font-weight: 600; margin-top: 4px; }
 
+/* ── EST. NAV CHIP IN HEADER ── */
+.header-center {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+.est-nav-chip {
+    background: linear-gradient(135deg, #0f1e38, #162440);
+    border: 1px solid #1e3a5f;
+    border-radius: 16px;
+    padding: 14px 28px;
+    text-align: center;
+    min-width: 200px;
+}
+.est-nav-chip-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    margin-bottom: 6px;
+}
+.est-nav-chip-value {
+    font-size: 28px;
+    font-weight: 900;
+    color: #f8fafc;
+    letter-spacing: -0.5px;
+    line-height: 1;
+}
+.est-nav-chip-sub { font-size: 12px; font-weight: 600; margin-top: 5px; }
+.est-nav-chip-sub.pos { color: #22c55e; }
+.est-nav-chip-sub.neg { color: #ef4444; }
+
+/* ── MONTHLY TOGGLE TITLE ROW ── */
+.section-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+}
+
 /* ── SUMMARY METRICS BAR ── */
 .metrics-bar {
     display: grid;
@@ -680,6 +722,15 @@ st.markdown(f"""
       <div class="fund-meta">Direct Growth  ·  NAV-based live tracking  ·  NSE equities</div>
     </div>
   </div>
+  <div class="header-center">
+    <div class="est-nav-chip">
+      <div class="est-nav-chip-label">⚡ Est. Live NAV</div>
+      <div class="est-nav-chip-value">₹{estimated_nav:.2f}</div>
+      <div class="est-nav-chip-sub {'pos' if total_weighted_return>=0 else 'neg'}">
+        {'▲' if total_weighted_return>=0 else '▼'} {'+' if total_weighted_return>=0 else ''}{total_weighted_return:.2f}% vs prev ₹{previous_nav}
+      </div>
+    </div>
+  </div>
   <div class="header-right">
     <div class="last-updated">
       <span class="live-dot"></span>Auto-refresh every 5 s
@@ -704,7 +755,7 @@ def pct_class(v: float) -> str:
 MASK = "₹ ● ● ● ● ●"
 
 # ── Session state for eye toggles ──────
-for _k in ("show_unreal", "show_portval", "show_units"):
+for _k in ("show_unreal", "show_portval", "show_units", "show_daily", "show_monthly_rs"):
     if _k not in st.session_state:
         st.session_state[_k] = True
 
@@ -792,15 +843,23 @@ with c5:
       </div>
     </div>""", unsafe_allow_html=True)
 
-# Card 6 — Est. daily P&L  (no eye)
+# Card 6 — Est. daily P&L  (👁 eye)
 with c6:
+    _show = st.session_state.show_daily
+    _top, _eye = st.columns([6, 1])
+    with _top:
+        st.markdown('<div class="metric-label" style="margin:0;padding:6px 0 0 0;font-size:11px;color:#475569;font-weight:600;text-transform:uppercase;letter-spacing:.8px">Est. Daily P&amp;L (live)</div>', unsafe_allow_html=True)
+    with _eye:
+        if st.button("👁" if _show else "🙈", key="eye_daily", help="Toggle visibility"):
+            st.session_state.show_daily = not _show
+            st.rerun()
+    _val = fmt_rs(daily_return_rs) if _show else MASK
+    _sub = f"{est_sign}{abs(total_weighted_return):.2f}%" if _show else "——"
+    _card = "pos" if daily_return_rs >= 0 else "neg"
     st.markdown(f"""
-    <div class="metric-card {'pos' if daily_return_rs>=0 else 'neg'}-card">
-      <div class="metric-label">Est. Daily P&amp;L (live)</div>
-      <div class="metric-value">{fmt_rs(daily_return_rs)}</div>
-      <div class="metric-sub {pct_class(total_weighted_return)}">
-        {est_sign}{abs(total_weighted_return):.2f}%
-      </div>
+    <div class="metric-card {_card}-card" style="padding-top:10px;">
+      <div class="metric-value {'metric-masked' if not _show else ''}">{_val}</div>
+      <div class="metric-sub {pct_class(total_weighted_return)}">{_sub}</div>
     </div>""", unsafe_allow_html=True)
 
 # Card 7 — Total Units  (👁 eye)
@@ -843,22 +902,35 @@ st.markdown('</div>', unsafe_allow_html=True)
 # ─────────────────────────────────────────
 #  RENDER — MONTHLY SUMMARY STRIP
 # ─────────────────────────────────────────
-st.markdown('<div class="section-title">📊 Monthly P&amp;L Summary</div>', unsafe_allow_html=True)
+_show_mo = st.session_state.show_monthly_rs
+_title_col, _eye_col = st.columns([11, 1])
+with _title_col:
+    st.markdown('<div class="section-title" style="margin-bottom:0;">📊 Monthly P&amp;L Summary</div>', unsafe_allow_html=True)
+with _eye_col:
+    if st.button("👁" if _show_mo else "🙈", key="eye_monthly", help="Hide/show ₹ amounts"):
+        st.session_state.show_monthly_rs = not _show_mo
+        st.rerun()
+
 month_cards_html = '<div class="monthly-summary-grid">'
 for yr, mo in sorted(set((d.year, d.month) for d in sorted_dates)):
     mr = monthly_return(yr, mo)
     if mr is None:
         continue
-    pct  = mr["pct"]
-    rs   = mr["rs"]
-    p_cl = "pos" if pct >= 0 else "neg"
-    sign = "+" if pct >= 0 else ""
+    pct    = mr["pct"]
+    rs     = mr["rs"]
+    p_cl   = "pos" if pct >= 0 else "neg"
+    sign   = "+" if pct >= 0 else ""
     r_sign = "+" if rs >= 0 else "−"
+    rs_html = (
+        f'<div class="month-card-rs {p_cl}">{r_sign}₹{abs(rs):,.0f}</div>'
+        if _show_mo else
+        '<div class="month-card-rs" style="color:#334155;letter-spacing:3px;">●●●●●</div>'
+    )
     month_cards_html += f"""
     <div class="month-card">
       <div class="month-card-name">{mr['month_name']} {yr}</div>
       <div class="month-card-pct {p_cl}">{sign}{pct:.2f}%</div>
-      <div class="month-card-rs {p_cl}">{r_sign}₹{abs(rs):,.0f}</div>
+      {rs_html}
     </div>"""
 month_cards_html += '</div>'
 st.markdown(month_cards_html, unsafe_allow_html=True)
