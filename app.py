@@ -272,13 +272,12 @@ html, body, [class*="css"] {
 .month-card-rs.neg { color: #b91c1c; }
 
 /* ── GAINERS / LOSERS ── */
-.gl-row { display: flex; gap: 14px; margin-bottom: 24px; }
 .gl-panel {
-    flex: 1;
     background: #0d1424;
     border: 1px solid #1a2740;
     border-radius: 14px;
     padding: 18px;
+    height: 100%;
 }
 .gl-item {
     display: flex;
@@ -294,6 +293,31 @@ html, body, [class*="css"] {
 .gl-weight { font-size: 11px; color: #475569; margin-top: 2px; }
 .gl-pct-pos { font-size: 15px; font-weight: 800; color: #22c55e; }
 .gl-pct-neg { font-size: 15px; font-weight: 800; color: #ef4444; }
+
+/* ── EYE TOGGLE BUTTON ── */
+.eye-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2px;
+}
+div[data-testid="stButton"].eye-btn > button {
+    background: transparent !important;
+    border: 1px solid #1e3a5f !important;
+    color: #64748b !important;
+    padding: 1px 7px !important;
+    font-size: 13px !important;
+    border-radius: 6px !important;
+    line-height: 1.4 !important;
+    min-height: 0 !important;
+    height: auto !important;
+}
+div[data-testid="stButton"].eye-btn > button:hover {
+    border-color: #3b82f6 !important;
+    color: #93c5fd !important;
+    background: #1e3a5f22 !important;
+}
+.metric-masked { color: #334155 !important; letter-spacing: 3px; }
 
 /* ── TABLE ── */
 div[data-testid="stDataFrame"] {
@@ -668,7 +692,7 @@ st.markdown(f"""
 
 
 # ─────────────────────────────────────────
-#  RENDER — SUMMARY METRIC CARDS (row 1)
+#  HELPERS
 # ─────────────────────────────────────────
 def fmt_rs(v: float) -> str:
     sign = "+" if v >= 0 else "−"
@@ -677,69 +701,134 @@ def fmt_rs(v: float) -> str:
 def pct_class(v: float) -> str:
     return "pos" if v >= 0 else "neg"
 
-latest_nav_sign  = "+" if latest_pct >= 0 else "−"
-unrel_class      = pct_class(unrealised_pct)
+MASK = "₹ ● ● ● ● ●"
 
-# row 1
-st.markdown(f"""
-<div class="metrics-bar">
-  <div class="metric-card nav-card">
-    <div class="metric-label">Latest NAV ({latest_date.strftime('%d %b')})</div>
-    <div class="metric-value">₹{latest_nav:.4f}</div>
-    <div class="metric-sub {pct_class(latest_pct)}">
-      {latest_nav_sign}{abs(latest_pct):.2f}%  ·  {fmt_rs(latest_rs)} today
-    </div>
-  </div>
-  <div class="metric-card {'pos' if unrealised_pct>=0 else 'neg'}-card">
-    <div class="metric-label">Unrealised P&amp;L</div>
-    <div class="metric-value">{fmt_rs(unrealised_pl)}</div>
-    <div class="metric-sub {unrel_class}">
-      {"+" if unrealised_pct>=0 else ""}{unrealised_pct:.2f}%  since avg NAV ₹{AVG_NAV:.2f}
-    </div>
-  </div>
-  <div class="metric-card {'pos' if weekly_pct>=0 else 'neg'}-card">
-    <div class="metric-label">Week-to-Date Return</div>
-    <div class="metric-value">{("+" if weekly_pct>=0 else "")}{weekly_pct:.2f}%</div>
-    <div class="metric-sub {pct_class(weekly_pct)}">{fmt_rs(weekly_rs)}</div>
-  </div>
-  <div class="metric-card neutral-card">
-    <div class="metric-label">Current Portfolio Value</div>
-    <div class="metric-value">₹{current_value:,.0f}</div>
-    <div class="metric-sub neutral">Invested ₹{TOTAL_INVESTMENT:,.0f}</div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+# ── Session state for eye toggles ──────
+for _k in ("show_unreal", "show_portval", "show_units"):
+    if _k not in st.session_state:
+        st.session_state[_k] = True
 
-# row 2
+# ─────────────────────────────────────────
+#  RENDER — METRIC ROW 1  (4 cards)
+# ─────────────────────────────────────────
+latest_nav_sign = "+" if latest_pct >= 0 else "−"
+unrel_class     = pct_class(unrealised_pct)
+wkly_class      = pct_class(weekly_pct)
+
+c1, c2, c3, c4 = st.columns(4)
+
+# Card 1 — Latest NAV  (no eye)
+with c1:
+    st.markdown(f"""
+    <div class="metric-card nav-card">
+      <div class="metric-label">Latest NAV ({latest_date.strftime('%d %b')})</div>
+      <div class="metric-value">₹{latest_nav:.4f}</div>
+      <div class="metric-sub {pct_class(latest_pct)}">
+        {latest_nav_sign}{abs(latest_pct):.2f}% &nbsp;·&nbsp; {fmt_rs(latest_rs)} today
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+# Card 2 — Unrealised P&L  (👁 eye)
+with c2:
+    _show = st.session_state.show_unreal
+    _top, _eye = st.columns([6, 1])
+    with _top:
+        st.markdown(f'<div class="metric-label" style="margin:0;padding:6px 0 0 0;font-size:11px;color:#475569;font-weight:600;text-transform:uppercase;letter-spacing:.8px">Unrealised P&amp;L</div>', unsafe_allow_html=True)
+    with _eye:
+        if st.button("👁" if _show else "🙈", key="eye_unreal", help="Toggle visibility"):
+            st.session_state.show_unreal = not _show
+            st.rerun()
+    _val  = fmt_rs(unrealised_pl) if _show else MASK
+    _sub  = f'{"+" if unrealised_pct>=0 else ""}{unrealised_pct:.2f}%  since avg ₹{AVG_NAV:.2f}' if _show else "——"
+    _card = "pos" if unrealised_pct >= 0 else "neg"
+    st.markdown(f"""
+    <div class="metric-card {_card}-card" style="padding-top:10px;">
+      <div class="metric-value {'metric-masked' if not _show else ''}">{_val}</div>
+      <div class="metric-sub {unrel_class}">{_sub}</div>
+    </div>""", unsafe_allow_html=True)
+
+# Card 3 — WTD Return  (no eye)
+with c3:
+    st.markdown(f"""
+    <div class="metric-card {'pos' if weekly_pct>=0 else 'neg'}-card">
+      <div class="metric-label">Week-to-Date Return</div>
+      <div class="metric-value">{("+" if weekly_pct>=0 else "")}{weekly_pct:.2f}%</div>
+      <div class="metric-sub {wkly_class}">{fmt_rs(weekly_rs)}</div>
+    </div>""", unsafe_allow_html=True)
+
+# Card 4 — Current Portfolio Value  (👁 eye)
+with c4:
+    _show = st.session_state.show_portval
+    _top, _eye = st.columns([6, 1])
+    with _top:
+        st.markdown('<div class="metric-label" style="margin:0;padding:6px 0 0 0;font-size:11px;color:#475569;font-weight:600;text-transform:uppercase;letter-spacing:.8px">Current Portfolio Value</div>', unsafe_allow_html=True)
+    with _eye:
+        if st.button("👁" if _show else "🙈", key="eye_portval", help="Toggle visibility"):
+            st.session_state.show_portval = not _show
+            st.rerun()
+    _val = f"₹{current_value:,.0f}" if _show else MASK
+    _sub = f"Invested ₹{TOTAL_INVESTMENT:,.0f}" if _show else "——"
+    st.markdown(f"""
+    <div class="metric-card neutral-card" style="padding-top:10px;">
+      <div class="metric-value {'metric-masked' if not _show else ''}">{_val}</div>
+      <div class="metric-sub neutral">{_sub}</div>
+    </div>""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────
+#  RENDER — METRIC ROW 2  (4 cards)
+# ─────────────────────────────────────────
 est_sign = "+" if total_weighted_return >= 0 else "−"
-st.markdown(f"""
-<div class="metrics-bar-2">
-  <div class="metric-card nav-card">
-    <div class="metric-label">Est. NAV (live holdings)</div>
-    <div class="metric-value">₹{estimated_nav:.2f}</div>
-    <div class="metric-sub {pct_class(total_weighted_return)}">
-      {est_sign}{abs(total_weighted_return):.2f}% vs prev NAV ₹{previous_nav}
-    </div>
-  </div>
-  <div class="metric-card {'pos' if daily_return_rs>=0 else 'neg'}-card">
-    <div class="metric-label">Est. Daily P&amp;L (live)</div>
-    <div class="metric-value">{fmt_rs(daily_return_rs)}</div>
-    <div class="metric-sub {pct_class(total_weighted_return)}">
-      {est_sign}{abs(total_weighted_return):.2f}%
-    </div>
-  </div>
-  <div class="metric-card neutral-card">
-    <div class="metric-label">Total Units Held</div>
-    <div class="metric-value">{TOTAL_UNITS:,.3f}</div>
-    <div class="metric-sub neutral">Avg NAV ₹{AVG_NAV:.2f}</div>
-  </div>
-  <div class="metric-card neutral-card">
-    <div class="metric-label">Investment Duration</div>
-    <div class="metric-value">{INV_DURATION}</div>
-    <div class="metric-sub neutral">Since 02 Sep 2024</div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+
+c5, c6, c7, c8 = st.columns(4)
+
+# Card 5 — Est. live NAV  (no eye)
+with c5:
+    st.markdown(f"""
+    <div class="metric-card nav-card">
+      <div class="metric-label">Est. NAV (live holdings)</div>
+      <div class="metric-value">₹{estimated_nav:.2f}</div>
+      <div class="metric-sub {pct_class(total_weighted_return)}">
+        {est_sign}{abs(total_weighted_return):.2f}% vs prev NAV ₹{previous_nav}
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+# Card 6 — Est. daily P&L  (no eye)
+with c6:
+    st.markdown(f"""
+    <div class="metric-card {'pos' if daily_return_rs>=0 else 'neg'}-card">
+      <div class="metric-label">Est. Daily P&amp;L (live)</div>
+      <div class="metric-value">{fmt_rs(daily_return_rs)}</div>
+      <div class="metric-sub {pct_class(total_weighted_return)}">
+        {est_sign}{abs(total_weighted_return):.2f}%
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+# Card 7 — Total Units  (👁 eye)
+with c7:
+    _show = st.session_state.show_units
+    _top, _eye = st.columns([6, 1])
+    with _top:
+        st.markdown('<div class="metric-label" style="margin:0;padding:6px 0 0 0;font-size:11px;color:#475569;font-weight:600;text-transform:uppercase;letter-spacing:.8px">Total Units Held</div>', unsafe_allow_html=True)
+    with _eye:
+        if st.button("👁" if _show else "🙈", key="eye_units", help="Toggle visibility"):
+            st.session_state.show_units = not _show
+            st.rerun()
+    _val = f"{TOTAL_UNITS:,.3f}" if _show else "● ● ● ● ●"
+    _sub = f"Avg NAV ₹{AVG_NAV:.2f}" if _show else "——"
+    st.markdown(f"""
+    <div class="metric-card neutral-card" style="padding-top:10px;">
+      <div class="metric-value {'metric-masked' if not _show else ''}">{_val}</div>
+      <div class="metric-sub neutral">{_sub}</div>
+    </div>""", unsafe_allow_html=True)
+
+# Card 8 — Investment Duration  (no eye)
+with c8:
+    st.markdown(f"""
+    <div class="metric-card neutral-card">
+      <div class="metric-label">Investment Duration</div>
+      <div class="metric-value">{INV_DURATION}</div>
+      <div class="metric-sub neutral">Since 02 Sep 2024</div>
+    </div>""", unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────
@@ -781,35 +870,38 @@ st.markdown(month_cards_html, unsafe_allow_html=True)
 st.markdown('<hr class="hdivider">', unsafe_allow_html=True)
 st.markdown('<div class="section-title">🚀 Live Holdings Movers</div>', unsafe_allow_html=True)
 
-def build_gl_item(row, kind: str) -> str:
-    chg   = row["% Change"]
-    sign  = "+" if chg >= 0 else ""
-    cls   = "gain" if kind == "g" else "loss"
-    pcls  = "gl-pct-pos" if kind == "g" else "gl-pct-neg"
-    return f"""
-    <div class="gl-item {cls}">
-      <div>
-        <div class="gl-name">{row['Stock']}</div>
-        <div class="gl-weight">{row['Weight %']:.2f}% of portfolio</div>
-      </div>
-      <div class="{pcls}">{sign}{chg:.2f}%</div>
-    </div>"""
+col_g, col_l = st.columns(2)
 
-gainer_items = "".join(build_gl_item(r, "g") for _, r in top_gainers.iterrows())
-loser_items  = "".join(build_gl_item(r, "l") for _, r in top_losers.iterrows())
+with col_g:
+    st.markdown('<div class="gl-panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title" style="margin-bottom:12px;font-size:15px;">🚀 Top 5 Gainers</div>', unsafe_allow_html=True)
+    for _, row in top_gainers.iterrows():
+        chg  = row["% Change"]
+        sign = "+" if chg >= 0 else ""
+        st.markdown(f"""
+        <div class="gl-item gain">
+          <div>
+            <div class="gl-name">{row['Stock']}</div>
+            <div class="gl-weight">{row['Weight %']:.2f}% of portfolio</div>
+          </div>
+          <div class="gl-pct-pos">{sign}{chg:.2f}%</div>
+        </div>""", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown(f"""
-<div class="gl-row">
-  <div class="gl-panel">
-    <div class="section-title" style="margin-bottom:12px;">🚀 Top 5 Gainers</div>
-    {gainer_items}
-  </div>
-  <div class="gl-panel">
-    <div class="section-title" style="margin-bottom:12px;">🔻 Top 5 Losers</div>
-    {loser_items}
-  </div>
-</div>
-""", unsafe_allow_html=True)
+with col_l:
+    st.markdown('<div class="gl-panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title" style="margin-bottom:12px;font-size:15px;">🔻 Top 5 Losers</div>', unsafe_allow_html=True)
+    for _, row in top_losers.iterrows():
+        chg = row["% Change"]
+        st.markdown(f"""
+        <div class="gl-item loss">
+          <div>
+            <div class="gl-name">{row['Stock']}</div>
+            <div class="gl-weight">{row['Weight %']:.2f}% of portfolio</div>
+          </div>
+          <div class="gl-pct-neg">{chg:.2f}%</div>
+        </div>""", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────
