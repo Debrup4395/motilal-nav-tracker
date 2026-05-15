@@ -1,72 +1,85 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-# =========================
-# AUTO REFRESH EVERY 05 SEC
-# =========================
-
-st_autorefresh(interval=5000, key="refresh")
-
-# =========================
-# PAGE SETTINGS
-# =========================
+# =========================================================
+# PAGE CONFIG
+# =========================================================
 
 st.set_page_config(
-    page_title="Motilal Oswal Midcap Fund NAV Tracker",
+    page_title="Motilal Oswal Midcap Fund Tracker",
     layout="wide"
 )
 
-# =========================
+# =========================================================
+# AUTO REFRESH
+# =========================================================
+
+st_autorefresh(interval=5000, key="refresh")
+
+# =========================================================
 # CUSTOM CSS
-# =========================
+# =========================================================
 
 st.markdown("""
 <style>
 
+html, body, [class*="css"] {
+    font-family: 'Segoe UI', sans-serif;
+}
+
 .main {
-    background-color: #050816;
+    background: #050816;
     color: white;
 }
 
 .block-container {
     padding-top: 1rem;
-    padding-bottom: 1rem;
-}
-
-div[data-testid="metric-container"] {
-    background: linear-gradient(135deg, #111827, #1f2937);
-    border: 1px solid #374151;
-    padding: 20px;
-    border-radius: 18px;
-    text-align: center;
-    box-shadow: 0px 0px 15px rgba(0,0,0,0.35);
-}
-
-div[data-testid="metric-container"] label {
-    color: #cbd5e1 !important;
-    font-size: 15px !important;
+    padding-bottom: 2rem;
 }
 
 .big-title {
     font-size: 42px;
-    font-weight: bold;
+    font-weight: 700;
     color: white;
+    letter-spacing: -1px;
+}
+
+.subtitle {
+    color: #60a5fa;
+    font-size: 18px;
+    margin-top: -8px;
+    font-weight: 600;
 }
 
 .timestamp {
-    color: #bbbbbb;
-    font-size: 15px;
+    color: #94a3b8;
+    font-size: 14px;
+    margin-top: 5px;
+}
+
+div[data-testid="metric-container"] {
+    background: linear-gradient(135deg, #111827, #1e293b);
+    border: 1px solid #334155;
+    padding: 22px;
+    border-radius: 20px;
+    box-shadow: 0 0 18px rgba(0,0,0,0.35);
+}
+
+div[data-testid="metric-container"] label {
+    color: #cbd5e1 !important;
+    font-size: 14px !important;
 }
 
 .screenshot-box {
     background: linear-gradient(135deg, #0f172a, #111827);
-    padding: 25px;
-    border-radius: 25px;
     border: 1px solid #334155;
+    border-radius: 25px;
+    padding: 25px;
     margin-bottom: 20px;
 }
 
@@ -89,24 +102,24 @@ div[data-testid="metric-container"] label {
 </style>
 """, unsafe_allow_html=True)
 
-# =========================
+# =========================================================
 # INDIAN TIME
-# =========================
+# =========================================================
 
 india_time = datetime.now(
     ZoneInfo("Asia/Kolkata")
 ).strftime("%d %b %Y | %I:%M:%S %p")
 
-# =========================
-# LOGO + TITLE
-# =========================
+# =========================================================
+# HEADER
+# =========================================================
 
-col_logo, col_title = st.columns([1, 8])
+col1, col2 = st.columns([1,8])
 
-with col_logo:
+with col1:
     st.image("logo.png", width=90)
 
-with col_title:
+with col2:
 
     st.markdown(
         '<div class="big-title">🔥 Motilal Oswal Midcap Fund NAV Tracker</div>',
@@ -114,61 +127,47 @@ with col_title:
     )
 
     st.markdown(
-        '<div style="font-size:18px; color:#60a5fa; font-weight:bold; margin-top:-8px;">© Debrup Bera</div>',
+        '<div class="subtitle">Professional Live NAV Analytics Dashboard</div>',
         unsafe_allow_html=True
     )
 
     st.markdown(
-        f'<div class="timestamp">Last Updated: {india_time}</div>',
+        f'<div class="timestamp">Last Updated : {india_time}</div>',
         unsafe_allow_html=True
     )
 
-# =========================
-# MANUAL NAV UPDATE
-# =========================
+# =========================================================
+# MANUAL NAV SETTINGS
+# =========================================================
 
 previous_nav = 104.84
 weekly_start_nav = 108.67
 
-# =========================
+# =========================================================
 # INVESTMENT DETAILS
-# =========================
+# =========================================================
 
 avg_nav = 117.70
-
 total_units = 36529.698
 
-total_investment = (
-    total_units * avg_nav
-)
+total_investment = total_units * avg_nav
 
-investment_date = datetime(
-    2024,
-    9,
-    2
-)
+investment_date = datetime(2024,9,2)
 
 today_date = datetime.now()
 
-total_days = (
-    today_date - investment_date
-).days
+total_days = (today_date - investment_date).days
 
 years = total_days // 365
-
 remaining_days = total_days % 365
-
 months = remaining_days // 30
-
 days = remaining_days % 30
 
-investment_duration = (
-    f"{years}Y {months}M {days}D"
-)
+investment_duration = f"{years}Y {months}M {days}D"
 
-# =========================
+# =========================================================
 # PORTFOLIO HOLDINGS
-# =========================
+# =========================================================
 
 stocks = [
 
@@ -202,12 +201,11 @@ stocks = [
 
 ]
 
-# =========================
-# FETCH LIVE DATA
-# =========================
+# =========================================================
+# FETCH LIVE STOCK DATA
+# =========================================================
 
 rows = []
-
 total_weighted_return = 0
 
 for symbol, weight in stocks:
@@ -237,78 +235,66 @@ for symbol, weight in stocks:
         rows.append([
 
             symbol,
-            round(weight, 2),
-            round(prev_close, 2),
-            round(live_price, 2),
-            round(change_pct, 2)
+            weight,
+            round(prev_close,2),
+            round(live_price,2),
+            round(change_pct,2)
 
         ])
 
     except:
 
         rows.append([
-
             symbol,
             weight,
             0,
             0,
             0
-
         ])
 
-# =========================
+# =========================================================
 # DATAFRAME
-# =========================
+# =========================================================
 
 df = pd.DataFrame(
 
     rows,
 
     columns=[
-
         "Stock",
         "Weight %",
         "Previous Close",
         "Live Price",
         "% Change"
-
     ]
 
 )
 
-# =========================
-# NAV CALCULATIONS
-# =========================
+# =========================================================
+# NAV CALCULATION
+# =========================================================
 
 estimated_nav = previous_nav * (
     1 + total_weighted_return / 100
 )
 
-daily_nav_change = (
-    estimated_nav - previous_nav
-)
+daily_nav_change = estimated_nav - previous_nav
 
 weekly_change = (
     (estimated_nav - weekly_start_nav)
     / weekly_start_nav
 ) * 100
 
-weekly_nav_change = (
-    estimated_nav - weekly_start_nav
-)
+weekly_nav_change = estimated_nav - weekly_start_nav
 
-# =========================
-# UNREALISED PROFIT / LOSS
-# =========================
+# =========================================================
+# P/L CALCULATIONS
+# =========================================================
 
 unrealised_pl_pct = (
     (estimated_nav - avg_nav)
     / avg_nav
 ) * 100
-
-# =========================
-# AMOUNT CALCULATIONS
-# =========================
 
 daily_return_amount = (
     total_investment
@@ -328,9 +314,9 @@ unrealised_pl_amount = (
     / 100
 )
 
-# =========================
-# TOP 5 GAINERS & LOSERS
-# =========================
+# =========================================================
+# TOP GAINERS & LOSERS
+# =========================================================
 
 top_gainers = df.sort_values(
     by="% Change",
@@ -342,9 +328,9 @@ top_losers = df.sort_values(
     ascending=True
 ).head(5)
 
-# =========================
-# CONDITIONAL COLORS
-# =========================
+# =========================================================
+# TABLE COLORS
+# =========================================================
 
 def color_change(val):
 
@@ -370,9 +356,9 @@ styled_df = df.style.format({
 
 )
 
-# =========================
-# SCREENSHOT SECTION
-# =========================
+# =========================================================
+# METRICS SECTION
+# =========================================================
 
 st.markdown('<div class="screenshot-box">', unsafe_allow_html=True)
 
@@ -390,14 +376,14 @@ col2.metric(
 )
 
 col3.metric(
-    "📅 Weekly Change",
+    "Weekly Change",
     f"{weekly_change:.2f}%",
     f"{weekly_nav_change:.2f} NAV"
 )
 
 col4.metric(
-    "📈 Daily Change",
-    f"{total_weighted_return:.2f}%"
+    "Daily Change",
+    f"{daily_nav_change:.2f}"
 )
 
 st.markdown("---")
@@ -405,17 +391,17 @@ st.markdown("---")
 col5, col6, col7 = st.columns(3)
 
 col5.metric(
-    "💰 Daily Return",
+    "Daily Return",
     f"₹{daily_return_amount:,.0f}"
 )
 
 col6.metric(
-    "💵 Weekly Return",
+    "Weekly Return",
     f"₹{weekly_return_amount:,.0f}"
 )
 
 col7.metric(
-    "💼 Unrealised P/L",
+    "Unrealised P/L",
     f"₹{unrealised_pl_amount:,.0f}",
     f"{unrealised_pl_pct:.2f}%"
 )
@@ -425,20 +411,20 @@ st.markdown("---")
 col8, col9 = st.columns(2)
 
 col8.metric(
-    "⏳ Investment Time",
+    "Investment Duration",
     investment_duration
 )
 
 col9.metric(
-    "🧾 Total Units",
+    "Total Units",
     f"{total_units:,.3f}"
 )
 
 st.markdown("---")
 
-# =========================
-# TOP 5 GAINERS
-# =========================
+# =========================================================
+# GAINERS & LOSERS
+# =========================================================
 
 col10, col11 = st.columns(2)
 
@@ -450,15 +436,11 @@ with col10:
 
         st.markdown(f"""
         <div class="gainer-box">
-        <b>{row['Stock']}</b> ({row['Weight %']:.2f}%)
-        <br>
-        {row['% Change']:.2f}%
+        <b>{row['Stock']}</b><br>
+        Weight : {row['Weight %']:.2f}%<br>
+        Change : {row['% Change']:.2f}%
         </div>
         """, unsafe_allow_html=True)
-
-# =========================
-# TOP 5 LOSERS
-# =========================
 
 with col11:
 
@@ -468,17 +450,17 @@ with col11:
 
         st.markdown(f"""
         <div class="loser-box">
-        <b>{row['Stock']}</b> ({row['Weight %']:.2f}%)
-        <br>
-        {row['% Change']:.2f}%
+        <b>{row['Stock']}</b><br>
+        Weight : {row['Weight %']:.2f}%<br>
+        Change : {row['% Change']:.2f}%
         </div>
         """, unsafe_allow_html=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
 
-# =========================
+# =========================================================
 # PORTFOLIO TABLE
-# =========================
+# =========================================================
 
 st.markdown("---")
 
@@ -490,6 +472,142 @@ st.dataframe(
     height=850
 )
 
+# =========================================================
+# NAV HEATMAP CALENDAR
+# =========================================================
+
+st.markdown("---")
+st.subheader("📅 Historical NAV Heatmap")
+
+nav_data = {
+
+    "2026-01-01":113.9116,
+    "2026-01-02":114.6253,
+    "2026-01-05":114.4763,
+    "2026-01-06":113.9835,
+    "2026-01-07":114.9269,
+    "2026-01-08":113.7923,
+    "2026-01-09":113.2379,
+    "2026-01-12":112.7175,
+    "2026-01-13":112.3857,
+    "2026-01-14":112.087,
+    "2026-05-14":104.8438
+
+}
+
+heatmap_df = pd.DataFrame(
+    list(nav_data.items()),
+    columns=["Date","NAV"]
+)
+
+heatmap_df["Date"] = pd.to_datetime(
+    heatmap_df["Date"]
+)
+
+heatmap_df["Return %"] = (
+    heatmap_df["NAV"].pct_change() * 100
+)
+
+heatmap_df["Weekday"] = (
+    heatmap_df["Date"].dt.weekday
+)
+
+colors = []
+
+for val in heatmap_df["Return %"]:
+
+    if pd.isna(val):
+        colors.append("gray")
+
+    elif val > 1:
+        colors.append("#00ff66")
+
+    elif val > 0:
+        colors.append("#66ff99")
+
+    elif val < -1:
+        colors.append("#ff1a1a")
+
+    else:
+        colors.append("#ff6666")
+
+fig = go.Figure()
+
+fig.add_trace(
+
+    go.Scatter(
+
+        x=heatmap_df["Date"],
+        y=heatmap_df["Weekday"],
+
+        mode="markers",
+
+        marker=dict(
+            size=24,
+            color=colors,
+            symbol="square"
+        ),
+
+        customdata=heatmap_df[
+            ["NAV","Return %"]
+        ],
+
+        hovertemplate=
+        "<b>%{x|%d %b %Y}</b><br>" +
+        "NAV : %{customdata[0]:.2f}<br>" +
+        "Return : %{customdata[1]:.2f}%<extra></extra>"
+
+    )
+
+)
+
+fig.update_layout(
+
+    height=300,
+
+    paper_bgcolor="#050816",
+    plot_bgcolor="#050816",
+
+    font=dict(
+        color="white"
+    ),
+
+    xaxis=dict(
+        showgrid=False,
+        tickformat="%b"
+    ),
+
+    yaxis=dict(
+
+        showgrid=False,
+
+        tickmode="array",
+
+        tickvals=[0,1,2,3,4],
+
+        ticktext=[
+            "Mon",
+            "Tue",
+            "Wed",
+            "Thu",
+            "Fri"
+        ]
+
+    )
+
+)
+
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
+
+# =========================================================
+# FOOTER
+# =========================================================
+
 st.markdown("---")
 
-st.caption("© Debrup Bera | Auto-refresh every 05 seconds")
+st.caption(
+    "© Motilal Oswal Midcap Fund Analytics Dashboard | Designed by Debrup Bera"
+)
