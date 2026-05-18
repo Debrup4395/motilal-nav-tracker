@@ -531,7 +531,7 @@ for i in range(1, len(sorted_dates)):
 # Latest NAV info
 latest_date    = sorted_dates[-1]
 latest_nav     = NAV_RAW[latest_date]
-latest_prev    = NAV_RAW[sorted_dates[-2]]
+latest_prev    = NAV_RAW[sorted_dates[-1]]
 latest_pct     = DAILY_RETURNS[latest_date]["pct"]
 latest_rs      = DAILY_RETURNS[latest_date]["rs"]
 
