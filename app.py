@@ -193,7 +193,7 @@ stocks = [
     ("MAXHEALTH", 2.23),
     ("POLICYBZR", 2.20),
     ("TVSMOTOR", 2.08),
-    ("ICICIPRULI", 1.96),
+    ("ICICIAMC", 1.96),
     ("IDFCFIRSTB", 1.47),
     ("PREMIERENE", 1.25),
     ("AXISBANK", 1.24),
