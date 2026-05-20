@@ -525,12 +525,12 @@ message_content = f"""
 🚀 Top 5 Gainers:
 """
 
-for idx, (_, row) in enumerate(top_gainers.head(3).iterrows(), 1):
+for idx, (_, row) in enumerate(top_gainers.head(5).iterrows(), 1):
     message_content += f"{idx}. {row['Stock']} - {row['% Change']:.2f}%\n"
 
 message_content += "\n🔻 Top 5 Losers:\n"
 
-for idx, (_, row) in enumerate(top_losers.head(3).iterrows(), 1):
+for idx, (_, row) in enumerate(top_losers.head(5).iterrows(), 1):
     message_content += f"{idx}. {row['Stock']} - {row['% Change']:.2f}%\n"
 
 message_content += "\n© Debrup Bera | Motilal Oswal Midcap Fund Tracker"
