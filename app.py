@@ -522,13 +522,13 @@ message_content = f"""
 • Weekly Change: {weekly_change:.2f}%
 • Investment Duration: {investment_duration}
 
-🚀 Top 3 Gainers:
+🚀 Top 5 Gainers:
 """
 
 for idx, (_, row) in enumerate(top_gainers.head(3).iterrows(), 1):
     message_content += f"{idx}. {row['Stock']} - {row['% Change']:.2f}%\n"
 
-message_content += "\n🔻 Top 3 Losers:\n"
+message_content += "\n🔻 Top 5 Losers:\n"
 
 for idx, (_, row) in enumerate(top_losers.head(3).iterrows(), 1):
     message_content += f"{idx}. {row['Stock']} - {row['% Change']:.2f}%\n"
