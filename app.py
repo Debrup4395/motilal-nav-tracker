@@ -554,7 +554,7 @@ with col_email:
 with col_phone:
     st.markdown("#### 📱 Send via WhatsApp")
     phone_number = st.text_input("Phone Number (with country code)", 
-                                 placeholder="+919332396551",
+                                 placeholder="+911234567890",
                                  help="Format: +91XXXXXXXXXX (India)")
 
 # Create buttons
