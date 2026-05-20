@@ -4,6 +4,10 @@ import yfinance as yf
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import urllib.parse
 
 # =========================
 # AUTO REFRESH EVERY 05 SEC
@@ -86,6 +90,20 @@ div[data-testid="metric-container"] label {
     margin-bottom: 10px;
 }
 
+.message-box {
+    background: linear-gradient(135deg, #1e293b, #0f172a);
+    padding: 20px;
+    border-radius: 18px;
+    border: 1px solid #475569;
+    margin-top: 20px;
+}
+
+.stButton>button {
+    border-radius: 12px;
+    height: 50px;
+    font-weight: bold;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -128,7 +146,7 @@ with col_title:
 # =========================
 
 previous_nav = 105.95
-weekly_start_nav = 104.72
+weekly_start_nav = 104.80
 
 # =========================
 # INVESTMENT DETAILS
@@ -193,7 +211,7 @@ stocks = [
     ("MAXHEALTH", 2.23),
     ("POLICYBZR", 2.20),
     ("TVSMOTOR", 2.08),
-    ("ICICIAMC", 1.96),
+    ("ICICIPRULI", 1.96),
     ("IDFCFIRSTB", 1.47),
     ("PREMIERENE", 1.25),
     ("AXISBANK", 1.24),
@@ -473,6 +491,155 @@ with col11:
         {row['% Change']:.2f}%
         </div>
         """, unsafe_allow_html=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+# =========================
+# EMAIL & WHATSAPP SECTION
+# =========================
+
+st.markdown('<div class="message-box">', unsafe_allow_html=True)
+
+st.subheader("📧 Share Today's Expected Returns")
+
+# Prepare the message content
+message_content = f"""
+🔥 Motilal Oswal Midcap Fund - Daily Update
+
+📅 Date: {india_time}
+
+📊 NAV Details:
+• Previous NAV: ₹{previous_nav:.2f}
+• Expected NAV: ₹{estimated_nav:.2f}
+• Daily Change: {total_weighted_return:.2f}%
+
+💰 Returns:
+• Daily Return: ₹{daily_return_amount:,.0f}
+• Weekly Return: ₹{weekly_return_amount:,.0f}
+• Unrealised P/L: ₹{unrealised_pl_amount:,.0f} ({unrealised_pl_pct:.2f}%)
+
+📈 Portfolio Performance:
+• Weekly Change: {weekly_change:.2f}%
+• Investment Duration: {investment_duration}
+
+🚀 Top 3 Gainers:
+"""
+
+for idx, (_, row) in enumerate(top_gainers.head(3).iterrows(), 1):
+    message_content += f"{idx}. {row['Stock']} - {row['% Change']:.2f}%\n"
+
+message_content += "\n🔻 Top 3 Losers:\n"
+
+for idx, (_, row) in enumerate(top_losers.head(3).iterrows(), 1):
+    message_content += f"{idx}. {row['Stock']} - {row['% Change']:.2f}%\n"
+
+message_content += "\n© Debrup Bera | Motilal Oswal Midcap Fund Tracker"
+
+# Display the message preview
+with st.expander("📝 Preview Message", expanded=False):
+    st.text_area("Message Content", message_content, height=300, disabled=True)
+
+# Create columns for input fields
+col_email, col_phone = st.columns(2)
+
+with col_email:
+    st.markdown("#### 📧 Send via Email")
+    recipient_email = st.text_input("Recipient Email", placeholder="example@gmail.com")
+    
+    # Email configuration (You need to set these in Streamlit secrets or environment variables)
+    sender_email = st.text_input("Your Email (Gmail)", placeholder="your-email@gmail.com")
+    sender_password = st.text_input("App Password", type="password", 
+                                   help="Use Gmail App Password, not your regular password")
+
+with col_phone:
+    st.markdown("#### 📱 Send via WhatsApp")
+    phone_number = st.text_input("Phone Number (with country code)", 
+                                 placeholder="+919332396551",
+                                 help="Format: +91XXXXXXXXXX (India)")
+
+# Create buttons
+col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
+
+with col_btn1:
+    send_email_btn = st.button("📧 Send Email", use_container_width=True)
+
+with col_btn2:
+    send_whatsapp_btn = st.button("📱 Send WhatsApp", use_container_width=True)
+
+# =========================
+# EMAIL SENDING FUNCTION
+# =========================
+
+def send_email(sender, password, recipient, subject, body):
+    try:
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = sender
+        msg['To'] = recipient
+        msg['Subject'] = subject
+        
+        msg.attach(MIMEText(body, 'plain'))
+        
+        # Connect to Gmail SMTP server
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(sender, password)
+        
+        # Send email
+        text = msg.as_string()
+        server.sendmail(sender, recipient, text)
+        server.quit()
+        
+        return True, "Email sent successfully! ✅"
+    
+    except Exception as e:
+        return False, f"Failed to send email: {str(e)}"
+
+# =========================
+# WHATSAPP LINK GENERATION
+# =========================
+
+def generate_whatsapp_link(phone, message):
+    # Remove '+' and any spaces from phone number
+    clean_phone = phone.replace('+', '').replace(' ', '').replace('-', '')
+    
+    # URL encode the message
+    encoded_message = urllib.parse.quote(message)
+    
+    # Generate WhatsApp link
+    whatsapp_url = f"https://wa.me/{clean_phone}?text={encoded_message}"
+    
+    return whatsapp_url
+
+# =========================
+# HANDLE BUTTON CLICKS
+# =========================
+
+if send_email_btn:
+    if not recipient_email or not sender_email or not sender_password:
+        st.error("⚠️ Please fill in all email fields!")
+    else:
+        with st.spinner("Sending email..."):
+            subject = f"Motilal Oswal Midcap Fund Update - {datetime.now().strftime('%d %b %Y')}"
+            success, message = send_email(sender_email, sender_password, recipient_email, 
+                                         subject, message_content)
+            
+            if success:
+                st.success(message)
+            else:
+                st.error(message)
+                st.info("💡 Tip: For Gmail, you need to use an 'App Password', not your regular password. "
+                       "Generate one at: https://myaccount.google.com/apppasswords")
+
+if send_whatsapp_btn:
+    if not phone_number:
+        st.error("⚠️ Please enter a phone number!")
+    else:
+        whatsapp_url = generate_whatsapp_link(phone_number, message_content)
+        st.success("✅ WhatsApp link generated!")
+        st.markdown(f"[📱 Click here to open WhatsApp]({whatsapp_url})")
+        st.info("💡 Clicking the link will open WhatsApp with the pre-filled message. "
+               "You can review and send it from there.")
 
 st.markdown('</div>', unsafe_allow_html=True)
 
