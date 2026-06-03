@@ -154,7 +154,7 @@ weekly_start_nav = 107.02
 
 avg_nav = 117.70
 
-total_units = 36529.698
+total_units = 36131.200
 
 total_investment = (
     total_units * avg_nav
