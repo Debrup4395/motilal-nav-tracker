@@ -145,7 +145,7 @@ with col_title:
 # MANUAL NAV UPDATE
 # =========================
 
-previous_nav = 104.12
+previous_nav = 104.95
 weekly_start_nav = 104.93
 
 # =========================
