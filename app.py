@@ -327,10 +327,7 @@ unrealised_pl_pct = (
 # AMOUNT CALCULATIONS
 # =========================
 
-daily_return_amount = (
-    estimated_nav - previous_nav
- * total_units
-)
+daily_return_amount = daily_nav_change * total_units
 
 weekly_return_amount = (
     total_investment
