@@ -328,9 +328,9 @@ unrealised_pl_pct = (
 # =========================
 
 daily_return_amount = (
-    total_investment
-    * total_weighted_return
-    / 100
+    estimated_nav - previous_nav
+) * total_units
+
 )
 
 weekly_return_amount = (
