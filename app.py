@@ -328,7 +328,7 @@ unrealised_pl_pct = (
 # =========================
 
 daily_return_amount = (
-    expected_nav - previous_nav
+    estimated_nav - previous_nav
  * total_units
 )
 
