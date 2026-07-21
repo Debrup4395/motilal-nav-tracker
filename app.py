@@ -10,10 +10,10 @@ from email.mime.multipart import MIMEMultipart
 import urllib.parse
 
 # =========================
-# AUTO REFRESH EVERY 05 SEC
+# AUTO REFRESH EVERY 15 SEC
 # =========================
 
-st_autorefresh(interval=5000, key="refresh")
+st_autorefresh(interval=15000, key="refresh")
 
 # =========================
 # PAGE SETTINGS
