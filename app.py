@@ -90,6 +90,22 @@ div[data-testid="metric-container"] label {
     margin-bottom: 10px;
 }
 
+.impact-up-box {
+    background: rgba(34,197,94,0.12);
+    border: 1px solid rgba(34,197,94,0.35);
+    padding: 12px;
+    border-radius: 14px;
+    margin-bottom: 10px;
+}
+
+.impact-down-box {
+    background: rgba(239,68,68,0.12);
+    border: 1px solid rgba(239,68,68,0.35);
+    padding: 12px;
+    border-radius: 14px;
+    margin-bottom: 10px;
+}
+
 .message-box {
     background: linear-gradient(135deg, #1e293b, #0f172a);
     padding: 20px;
@@ -248,11 +264,19 @@ for symbol, weight in stocks:
             / prev_close
         ) * 100
 
+        # weighted_return: this stock's contribution to the
+        # fund's total % return today (in percentage points)
         weighted_return = (
             change_pct * weight
         ) / 100
 
         total_weighted_return += weighted_return
+
+        # nav_impact: how many NAV rupees this single stock is
+        # adding/subtracting from today's estimated NAV
+        nav_impact = (
+            previous_nav * weighted_return
+        ) / 100
 
         rows.append([
 
@@ -260,7 +284,8 @@ for symbol, weight in stocks:
             round(weight, 2),
             round(prev_close, 2),
             round(live_price, 2),
-            round(change_pct, 2)
+            round(change_pct, 2),
+            round(nav_impact, 4)
 
         ])
 
@@ -270,6 +295,7 @@ for symbol, weight in stocks:
 
             symbol,
             weight,
+            0,
             0,
             0,
             0
@@ -290,7 +316,8 @@ df = pd.DataFrame(
         "Weight %",
         "Previous Close",
         "Live Price",
-        "% Change"
+        "% Change",
+        "NAV Impact"
 
     ]
 
@@ -359,6 +386,20 @@ top_losers = df.sort_values(
 ).head(5)
 
 # =========================
+# TOP 5 NAV MOVERS (BY IMPACT)
+# =========================
+
+top_nav_boosters = df.sort_values(
+    by="NAV Impact",
+    ascending=False
+).head(5)
+
+top_nav_draggers = df.sort_values(
+    by="NAV Impact",
+    ascending=True
+).head(5)
+
+# =========================
 # CONDITIONAL COLORS
 # =========================
 
@@ -377,12 +418,13 @@ styled_df = df.style.format({
     "Weight %": "{:.2f}",
     "Previous Close": "{:.2f}",
     "Live Price": "{:.2f}",
-    "% Change": "{:.2f}"
+    "% Change": "{:.2f}",
+    "NAV Impact": "{:+.4f}"
 
 }).map(
 
     color_change,
-    subset=["% Change"]
+    subset=["% Change", "NAV Impact"]
 
 )
 
@@ -490,6 +532,44 @@ with col11:
         </div>
         """, unsafe_allow_html=True)
 
+st.markdown("---")
+
+# =========================
+# TOP 5 NAV BOOSTERS / DRAGGERS
+# (which stocks are moving the LIVE NAV the most,
+#  in actual NAV rupees, not just % change)
+# =========================
+
+col12, col13 = st.columns(2)
+
+with col12:
+
+    st.subheader("🟢 Top 5 NAV Boosters")
+
+    for _, row in top_nav_boosters.iterrows():
+
+        st.markdown(f"""
+        <div class="impact-up-box">
+        <b>{row['Stock']}</b> ({row['Weight %']:.2f}% weight)
+        <br>
+        {row['% Change']:.2f}% move &nbsp;→&nbsp; <b>+{row['NAV Impact']:.4f}</b> NAV pts
+        </div>
+        """, unsafe_allow_html=True)
+
+with col13:
+
+    st.subheader("🔴 Top 5 NAV Draggers")
+
+    for _, row in top_nav_draggers.iterrows():
+
+        st.markdown(f"""
+        <div class="impact-down-box">
+        <b>{row['Stock']}</b> ({row['Weight %']:.2f}% weight)
+        <br>
+        {row['% Change']:.2f}% move &nbsp;→&nbsp; <b>{row['NAV Impact']:.4f}</b> NAV pts
+        </div>
+        """, unsafe_allow_html=True)
+
 st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
@@ -530,6 +610,16 @@ message_content += "\n🔻 Top 5 Losers:\n"
 
 for idx, (_, row) in enumerate(top_losers.head(5).iterrows(), 1):
     message_content += f"{idx}. {row['Stock']} - {row['% Change']:.2f}%\n"
+
+message_content += "\n🟢 Top 5 NAV Boosters (actual NAV pts):\n"
+
+for idx, (_, row) in enumerate(top_nav_boosters.head(5).iterrows(), 1):
+    message_content += f"{idx}. {row['Stock']} - +{row['NAV Impact']:.4f} NAV pts\n"
+
+message_content += "\n🔴 Top 5 NAV Draggers (actual NAV pts):\n"
+
+for idx, (_, row) in enumerate(top_nav_draggers.head(5).iterrows(), 1):
+    message_content += f"{idx}. {row['Stock']} - {row['NAV Impact']:.4f} NAV pts\n"
 
 message_content += "\n© Debrup Bera | Motilal Oswal Midcap Fund Tracker"
 
@@ -647,7 +737,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("---")
 
-st.subheader("📊 Portfolio Holdings")
+st.subheader("📊 Portfolio Holdings (with live NAV impact)")
 
 st.dataframe(
     styled_df,
