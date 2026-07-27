@@ -162,7 +162,7 @@ with col_title:
 # =========================
 
 previous_nav = 112.30
-weekly_start_nav = 114.42
+weekly_start_nav = 112.30
 
 # =========================
 # INVESTMENT DETAILS
