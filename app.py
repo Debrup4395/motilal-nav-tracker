@@ -277,21 +277,41 @@ try:
 except Exception:
     batch_data = pd.DataFrame()
 
-def get_prev_and_live_close(ticker, batch_data):
-    """Try to pull last two valid closes for a ticker out of the
-    batched download. Returns (prev_close, live_price) or (None, None)."""
+def get_prev_close(ticker, batch_data):
+    """Pull the last COMPLETE trading day's close out of the batched
+    download, to use as the 'Previous Close' baseline. This field
+    doesn't need to be real-time so the daily bar is fine and stable."""
     try:
         if isinstance(batch_data.columns, pd.MultiIndex):
             hist = batch_data[ticker]["Close"].dropna()
         else:
-            # Only one ticker in the batch -> no MultiIndex
             hist = batch_data["Close"].dropna()
 
         if len(hist) >= 2:
-            return hist.iloc[-2], hist.iloc[-1]
+            # second-to-last complete bar = yesterday's (or last session's) close
+            return hist.iloc[-2]
+        elif len(hist) == 1:
+            return hist.iloc[-1]
     except Exception:
         pass
-    return None, None
+    return None
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def get_live_price(ticker):
+    """Pull the true current/live quote (what actually shows on
+    Yahoo Finance's page) via fast_info, instead of relying on the
+    incomplete daily bar, which can be stale or wrong for thin /
+    recently-listed NSE stocks."""
+    try:
+        fi = yf.Ticker(ticker).fast_info
+        price = fi.get("last_price") or fi.get("lastPrice")
+        if price:
+            return float(price)
+    except Exception:
+        pass
+    return None
+
 
 rows = []
 
@@ -301,16 +321,28 @@ for symbol, weight in stocks:
 
     ticker = symbol + ".NS"
 
-    prev_close, live_price = get_prev_and_live_close(ticker, batch_data)
+    prev_close = get_prev_close(ticker, batch_data)
+    live_price = get_live_price(ticker)
 
-    # Fallback: retry this single symbol directly if it was missing
-    # from the batch (rare, but covers newly-listed / delayed symbols)
-    if prev_close is None or live_price is None:
+    # Fallback for previous close if the batch download had nothing
+    # for this symbol at all
+    if prev_close is None:
         try:
             single_hist = yf.Ticker(ticker).history(period="10d", interval="1d")["Close"].dropna()
-            if len(single_hist) >= 2:
-                prev_close = single_hist.iloc[-2]
-                live_price = single_hist.iloc[-1]
+            if len(single_hist) >= 1:
+                prev_close = single_hist.iloc[-2] if len(single_hist) >= 2 else single_hist.iloc[-1]
+        except Exception:
+            pass
+
+    # Fallback for live price if fast_info failed -> use latest daily bar
+    if live_price is None:
+        try:
+            if isinstance(batch_data.columns, pd.MultiIndex):
+                hist = batch_data[ticker]["Close"].dropna()
+            else:
+                hist = batch_data["Close"].dropna()
+            if len(hist) >= 1:
+                live_price = hist.iloc[-1]
         except Exception:
             pass
 
