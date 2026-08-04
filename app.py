@@ -241,6 +241,57 @@ stocks = [
 # =========================
 # FETCH LIVE DATA
 # =========================
+#
+# NOTE ON THE "None" BUG:
+# The old code called yf.Ticker(...).history() separately for each
+# of the 29 symbols, one after another. Yahoo Finance occasionally
+# rate-limits or hiccups on an individual request in that loop, so a
+# random symbol (e.g. COFORGE) would intermittently return empty data,
+# fall into the bare `except`, and render as None/blank in the table.
+#
+# Fix: fetch ALL tickers in ONE batched yf.download() call (much more
+# reliable + far fewer requests), then fall back to a single retry per
+# symbol only if that symbol is still missing. If a symbol truly can't
+# be fetched this refresh, we reuse its last known good values (kept in
+# st.session_state) instead of showing None/0, so the UI stays stable.
+
+if "last_good_data" not in st.session_state:
+    st.session_state["last_good_data"] = {}
+
+tickers_list = [symbol + ".NS" for symbol, _ in stocks]
+
+@st.cache_data(ttl=10, show_spinner=False)
+def fetch_batch_data(tickers):
+    return yf.download(
+        tickers=tickers,
+        period="10d",
+        interval="1d",
+        group_by="ticker",
+        threads=True,
+        progress=False,
+        auto_adjust=False,
+    )
+
+try:
+    batch_data = fetch_batch_data(tickers_list)
+except Exception:
+    batch_data = pd.DataFrame()
+
+def get_prev_and_live_close(ticker, batch_data):
+    """Try to pull last two valid closes for a ticker out of the
+    batched download. Returns (prev_close, live_price) or (None, None)."""
+    try:
+        if isinstance(batch_data.columns, pd.MultiIndex):
+            hist = batch_data[ticker]["Close"].dropna()
+        else:
+            # Only one ticker in the batch -> no MultiIndex
+            hist = batch_data["Close"].dropna()
+
+        if len(hist) >= 2:
+            return hist.iloc[-2], hist.iloc[-1]
+    except Exception:
+        pass
+    return None, None
 
 rows = []
 
@@ -250,57 +301,63 @@ for symbol, weight in stocks:
 
     ticker = symbol + ".NS"
 
-    try:
+    prev_close, live_price = get_prev_and_live_close(ticker, batch_data)
 
-        stock = yf.Ticker(ticker)
+    # Fallback: retry this single symbol directly if it was missing
+    # from the batch (rare, but covers newly-listed / delayed symbols)
+    if prev_close is None or live_price is None:
+        try:
+            single_hist = yf.Ticker(ticker).history(period="10d", interval="1d")["Close"].dropna()
+            if len(single_hist) >= 2:
+                prev_close = single_hist.iloc[-2]
+                live_price = single_hist.iloc[-1]
+        except Exception:
+            pass
 
-        hist = stock.history(period="5d", interval="1d")
-
-        prev_close = hist["Close"].iloc[-2]
-        live_price = hist["Close"].iloc[-1]
-
+    if prev_close is not None and live_price is not None:
+        # Good data this refresh -> compute and remember it
         change_pct = (
             (live_price - prev_close)
             / prev_close
         ) * 100
 
-        # weighted_return: this stock's contribution to the
-        # fund's total % return today (in percentage points)
         weighted_return = (
             change_pct * weight
         ) / 100
 
-        total_weighted_return += weighted_return
-
-        # nav_impact: how many NAV rupees this single stock is
-        # adding/subtracting from today's estimated NAV
         nav_impact = (
             previous_nav * weighted_return
         ) / 100
 
-        rows.append([
-
+        row = [
             symbol,
             round(weight, 2),
             round(prev_close, 2),
             round(live_price, 2),
             round(change_pct, 2),
-            round(nav_impact, 4)
+            round(nav_impact, 4),
+        ]
 
-        ])
+        st.session_state["last_good_data"][symbol] = row
+        total_weighted_return += weighted_return
 
-    except:
+    else:
+        # No fresh data at all this refresh -> reuse last known good
+        # values instead of showing None, so the row stays populated
+        cached_row = st.session_state["last_good_data"].get(symbol)
 
-        rows.append([
+        if cached_row is not None:
+            row = cached_row
+            # still add its cached contribution so NAV math stays consistent
+            cached_change_pct = row[4]
+            weighted_return = (cached_change_pct * weight) / 100
+            total_weighted_return += weighted_return
+        else:
+            # First-ever load and even the retry failed -> show 0s,
+            # not None, so formatting never breaks
+            row = [symbol, weight, 0, 0, 0, 0]
 
-            symbol,
-            weight,
-            0,
-            0,
-            0,
-            0
-
-        ])
+    rows.append(row)
 
 # =========================
 # DATAFRAME
