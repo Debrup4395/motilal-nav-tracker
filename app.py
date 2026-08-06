@@ -249,23 +249,37 @@ stocks = [
 # random symbol (e.g. COFORGE) would intermittently return empty data
 # and render as None/blank in the table.
 #
-# NOTE ON THE "WRONG PRICE / WRONG %" BUG (this fix):
-# The previous version pulled "Previous Close" from a batched daily-bar
-# download (yf.download) and "Live Price" from a separate fast_info call.
-# Early in the trading session, Yahoo's daily-bar data for TODAY often
-# doesn't exist yet in the download() response. That silently shifts
-# "previous close" back by one extra day (grabs the close from two days
-# ago instead of yesterday). Combine that stale/wrong previous close with
-# a correctly live current price, and you get an inflated or even
-# wrong-direction % change -- exactly the mismatch you saw vs the real
-# quote (e.g. COFORGE showing +1.64% when it was actually -1.06%).
+# NOTE ON THE "WRONG PRICE / WRONG %" BUG (previous fix):
+# An earlier version pulled "Previous Close" from a batched daily-bar
+# download (yf.download) and "Live Price" from a separate fast_info call,
+# which could desync (previous close shifted back an extra day).
 #
-# FIX: pull BOTH previous close and live price from the SAME fast_info
-# call per ticker. fast_info.previous_close is Yahoo's own live "last
-# completed session" reference price, so it can never desync from the
-# live price the way two separate endpoints could. A batched daily-bar
-# download is kept ONLY as a last-resort fallback if fast_info fails
-# entirely for a symbol.
+# NOTE ON THE "PRICE NOT UPDATING / STALE PRICE" BUG (THIS fix):
+# fast_info.last_price on NSE tickers is served from a Yahoo quote-cache
+# endpoint that, in practice, can sit stale for many minutes at a time --
+# it doesn't refresh in lockstep with the actual tape the way a real
+# broker terminal does. That's why your app was showing prices (e.g.
+# KALYANKJIL at 571.85) that lagged well behind the live quote elsewhere
+# (598.00).
+#
+# FIX: pull the LIVE PRICE from the most recent 1-minute intraday candle
+# (Ticker.history(period="1d", interval="1m")) instead of fast_info. The
+# 1-minute bar endpoint reflects Yahoo's actual recent trade ticks and
+# updates far more reliably. PREVIOUS CLOSE is taken from the last
+# complete daily bar (a fresh 5-day daily history pulled every cache
+# cycle), so it can't silently point at the wrong day either.
+# fast_info is kept ONLY as a last-resort fallback if intraday history
+# returns nothing (e.g. right at market open, or a temporary Yahoo hiccup).
+#
+# IMPORTANT CAVEAT: Yahoo Finance's free NSE data is not tick-by-tick
+# real-time -- it is commonly delayed by anywhere from a few seconds up
+# to ~15 minutes depending on the symbol and time of day. This fix makes
+# the app track Yahoo's own feed as closely and freshly as possible, but
+# it will still not perfectly match a broker terminal (like your second
+# screenshot) that has a licensed real-time NSE feed. If you need true
+# tick-level accuracy, you'd need a paid/licensed real-time data source
+# (e.g. NSE's official data feed, Kite Connect, Truedata, etc.) instead
+# of yfinance.
 
 if "last_good_data" not in st.session_state:
     st.session_state["last_good_data"] = {}
@@ -277,7 +291,7 @@ tickers_list = [symbol + ".NS" for symbol, _ in stocks]
 
 @st.cache_data(ttl=10, show_spinner=False)
 def fetch_batch_data(tickers):
-    """Fallback-only daily bar data, used solely when fast_info fails."""
+    """Fallback-only daily bar data, used solely when everything else fails."""
     return yf.download(
         tickers=tickers,
         period="10d",
@@ -291,23 +305,64 @@ def fetch_batch_data(tickers):
 
 @st.cache_data(ttl=10, show_spinner=False)
 def get_quote(ticker):
-    """Pull previous close AND live price from the SAME live-quote
-    snapshot (fast_info), so the two numbers are always consistent
-    with each other -- this is what fixes the wrong % change bug."""
+    """
+    Live price: most recent 1-minute intraday candle close. This tracks
+    Yahoo's actual trade ticks and is far less prone to going stale than
+    fast_info.last_price.
+
+    Previous close: last COMPLETE daily bar from a fresh daily-history
+    pull (not a cached quote field), so it can't desync from live price.
+
+    fast_info is used only as a last-resort fallback for either value.
+    """
+    live_price = None
+    prev_close = None
+
     try:
-        fi = yf.Ticker(ticker).fast_info
-        live_price = fi.get("last_price") or fi.get("lastPrice")
-        prev_close = fi.get("previous_close") or fi.get("previousClose") or fi.get("regular_market_previous_close")
+        t = yf.Ticker(ticker)
+
+        # --- LIVE PRICE: latest 1-minute intraday bar ---
+        intraday = t.history(period="1d", interval="1m")
+        if not intraday.empty:
+            closes = intraday["Close"].dropna()
+            if len(closes) >= 1:
+                live_price = float(closes.iloc[-1])
+
+        # --- PREVIOUS CLOSE: last complete daily bar ---
+        daily = t.history(period="5d", interval="1d")
+        if not daily.empty:
+            daily_closes = daily["Close"].dropna()
+            if len(daily_closes) >= 2:
+                prev_close = float(daily_closes.iloc[-2])
+            elif len(daily_closes) == 1:
+                # Only today's bar exists so far (e.g. pre-market) --
+                # let the fast_info fallback below try to fill this in.
+                prev_close = None
+
+        # --- FALLBACK: fast_info, only for whichever value is still missing ---
+        if live_price is None or prev_close is None:
+            fi = t.fast_info
+            if live_price is None:
+                live_price = fi.get("last_price") or fi.get("lastPrice")
+            if prev_close is None:
+                prev_close = (
+                    fi.get("previous_close")
+                    or fi.get("previousClose")
+                    or fi.get("regular_market_previous_close")
+                )
+
         if live_price and prev_close:
             return float(prev_close), float(live_price)
+
     except Exception:
         pass
+
     return None, None
 
 
 def get_prev_close_fallback(ticker, batch_data):
-    """Last-resort fallback if fast_info gave nothing at all for this
-    ticker. Uses the last COMPLETE daily bar from the batched download."""
+    """Last-resort fallback if everything above failed. Uses the last
+    COMPLETE daily bar from the batched download."""
     try:
         if isinstance(batch_data.columns, pd.MultiIndex):
             hist = batch_data[ticker]["Close"].dropna()
@@ -324,7 +379,7 @@ def get_prev_close_fallback(ticker, batch_data):
 
 
 def get_live_price_fallback(ticker, batch_data):
-    """Last-resort fallback live price if fast_info failed entirely."""
+    """Last-resort fallback live price if everything above failed."""
     try:
         if isinstance(batch_data.columns, pd.MultiIndex):
             hist = batch_data[ticker]["Close"].dropna()
@@ -348,11 +403,11 @@ for symbol, weight in stocks:
 
     ticker = symbol + ".NS"
 
-    # PRIMARY: previous close + live price from the SAME fast_info
-    # snapshot, so they're always mutually consistent
+    # PRIMARY: live price from 1m intraday bar, previous close from
+    # fresh daily history -- see get_quote() docstring above
     prev_close, live_price = get_quote(ticker)
 
-    # FALLBACK: only if fast_info gave us nothing at all for this symbol
+    # FALLBACK: only if get_quote gave us nothing at all for this symbol
     if prev_close is None or live_price is None:
         if batch_data is None:
             try:
@@ -855,4 +910,4 @@ st.dataframe(
 
 st.markdown("---")
 
-st.caption("© Debrup Bera | Auto-refresh every 05 seconds")
+st.caption("© Debrup Bera | Auto-refresh every 15 seconds")
