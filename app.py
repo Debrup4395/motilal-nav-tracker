@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import requests
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -254,32 +255,38 @@ stocks = [
 # download (yf.download) and "Live Price" from a separate fast_info call,
 # which could desync (previous close shifted back an extra day).
 #
-# NOTE ON THE "PRICE NOT UPDATING / STALE PRICE" BUG (THIS fix):
-# fast_info.last_price on NSE tickers is served from a Yahoo quote-cache
-# endpoint that, in practice, can sit stale for many minutes at a time --
-# it doesn't refresh in lockstep with the actual tape the way a real
-# broker terminal does. That's why your app was showing prices (e.g.
-# KALYANKJIL at 571.85) that lagged well behind the live quote elsewhere
-# (598.00).
+# NOTE ON THE "PRICE STILL WRONG AFTER THE 1m-BAR FIX" BUG (THIS fix):
+# Switching Live Price from fast_info to a 1-minute intraday candle
+# helped for some symbols, but for others (e.g. KALYANKJIL showing
+# 571.40 vs the broker's 598.00, a ~4.7% gap, WHILE Previous Close
+# matched exactly at 569.50) the gap remained. That combination --
+# correct previous close, wrong live price -- means the problem isn't
+# how the code reads Yahoo's data anymore, it's that Yahoo's own feed
+# for a chunk of NSE mid/small-caps is genuinely stale at the source.
+# No amount of restructuring the yfinance call can fix data Yahoo
+# itself hasn't refreshed yet.
 #
-# FIX: pull the LIVE PRICE from the most recent 1-minute intraday candle
-# (Ticker.history(period="1d", interval="1m")) instead of fast_info. The
-# 1-minute bar endpoint reflects Yahoo's actual recent trade ticks and
-# updates far more reliably. PREVIOUS CLOSE is taken from the last
-# complete daily bar (a fresh 5-day daily history pulled every cache
-# cycle), so it can't silently point at the wrong day either.
-# fast_info is kept ONLY as a last-resort fallback if intraday history
-# returns nothing (e.g. right at market open, or a temporary Yahoo hiccup).
+# REAL FIX: pull the LIVE PRICE directly from NSE India's own quote API
+# (nseindia.com) -- the exchange's own feed, which is the same
+# ultimate source your broker app's numbers come from. This is far
+# more current than Yahoo for NSE names. yfinance (1-minute bar, then
+# fast_info, then daily-bar batch) is kept as a fallback chain only for
+# when NSE's site is unreachable or rate-limits a request.
 #
-# IMPORTANT CAVEAT: Yahoo Finance's free NSE data is not tick-by-tick
-# real-time -- it is commonly delayed by anywhere from a few seconds up
-# to ~15 minutes depending on the symbol and time of day. This fix makes
-# the app track Yahoo's own feed as closely and freshly as possible, but
-# it will still not perfectly match a broker terminal (like your second
-# screenshot) that has a licensed real-time NSE feed. If you need true
-# tick-level accuracy, you'd need a paid/licensed real-time data source
-# (e.g. NSE's official data feed, Kite Connect, Truedata, etc.) instead
-# of yfinance.
+# IMPORTANT CAVEATS (read before assuming this is 100% fixed):
+# 1) NSE's website uses bot-detection (cookies + browser-like headers
+#    are required, done below via a persistent requests.Session). If
+#    NSE tightens that detection, or blocks the IP range Streamlit
+#    Cloud runs on, these calls can start failing -- in which case the
+#    code will silently drop back to the yfinance chain, and you'll
+#    see Yahoo-level accuracy again, not an error.
+# 2) NSE's own site quote still isn't literally the same millisecond
+#    tick your broker terminal shows (broker apps often have a direct
+#    licensed exchange feed), but it is materially closer than Yahoo.
+# 3) I could not execute/test this against the live NSE API from this
+#    environment (network access here is restricted to package
+#    registries only) -- please deploy and check it actually returns
+#    data for your account/region before relying on it.
 
 if "last_good_data" not in st.session_state:
     st.session_state["last_good_data"] = {}
@@ -287,7 +294,62 @@ if "last_good_data" not in st.session_state:
 if "last_good_time" not in st.session_state:
     st.session_state["last_good_time"] = {}
 
+if "nse_session" not in st.session_state:
+    st.session_state["nse_session"] = None
+
 tickers_list = [symbol + ".NS" for symbol, _ in stocks]
+
+NSE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.nseindia.com/get-quotes/equity",
+}
+
+
+def get_nse_session():
+    """Reuse one requests.Session across reruns so we don't re-negotiate
+    NSE's anti-bot cookies on every 15-second autorefresh. NSE's API
+    rejects requests that don't carry cookies obtained from first
+    loading the site like a real browser does."""
+    session = st.session_state.get("nse_session")
+    if session is None:
+        session = requests.Session()
+        session.headers.update(NSE_HEADERS)
+        try:
+            session.get("https://www.nseindia.com", timeout=5)
+        except Exception:
+            pass
+        st.session_state["nse_session"] = session
+    return session
+
+
+@st.cache_data(ttl=5, show_spinner=False)
+def get_nse_quote(symbol):
+    """PRIMARY live-quote source: NSE India's own quote-equity API.
+    This is the exchange's own feed rather than a third-party mirror,
+    so it doesn't carry Yahoo's staleness for lower-liquidity names."""
+    session = get_nse_session()
+    url = f"https://www.nseindia.com/api/quote-equity?symbol={symbol}"
+    try:
+        resp = session.get(url, timeout=5)
+        if resp.status_code != 200:
+            # Cookies likely expired -- refresh once and retry.
+            session.get("https://www.nseindia.com", timeout=5)
+            resp = session.get(url, timeout=5)
+        data = resp.json()
+        price_info = data.get("priceInfo", {})
+        live_price = price_info.get("lastPrice")
+        prev_close = price_info.get("previousClose")
+        if live_price and prev_close:
+            return float(prev_close), float(live_price)
+    except Exception:
+        pass
+    return None, None
+
 
 @st.cache_data(ttl=10, show_spinner=False)
 def fetch_batch_data(tickers):
@@ -306,13 +368,12 @@ def fetch_batch_data(tickers):
 @st.cache_data(ttl=10, show_spinner=False)
 def get_quote(ticker):
     """
-    Live price: most recent 1-minute intraday candle close. This tracks
-    Yahoo's actual trade ticks and is far less prone to going stale than
-    fast_info.last_price.
+    FALLBACK live-quote source (used only if NSE's API failed for this
+    symbol this refresh cycle). Same logic as before:
 
+    Live price: most recent 1-minute intraday candle close.
     Previous close: last COMPLETE daily bar from a fresh daily-history
     pull (not a cached quote field), so it can't desync from live price.
-
     fast_info is used only as a last-resort fallback for either value.
     """
     live_price = None
@@ -403,11 +464,16 @@ for symbol, weight in stocks:
 
     ticker = symbol + ".NS"
 
-    # PRIMARY: live price from 1m intraday bar, previous close from
-    # fresh daily history -- see get_quote() docstring above
-    prev_close, live_price = get_quote(ticker)
+    # PRIMARY: NSE India's own quote API -- see get_nse_quote() docstring
+    prev_close, live_price = get_nse_quote(symbol)
 
-    # FALLBACK: only if get_quote gave us nothing at all for this symbol
+    # FALLBACK 1: yfinance 1m intraday bar / fast_info -- only if NSE
+    # gave us nothing at all for this symbol this cycle
+    if prev_close is None or live_price is None:
+        prev_close, live_price = get_quote(ticker)
+
+    # FALLBACK 2: batched daily-bar download -- only if BOTH of the
+    # above failed entirely for this symbol
     if prev_close is None or live_price is None:
         if batch_data is None:
             try:
