@@ -161,8 +161,8 @@ with col_title:
 # MANUAL NAV UPDATE
 # =========================
 
-previous_nav = 117.36
-weekly_start_nav = 112.30
+previous_nav = 117.74
+weekly_start_nav = 117.602
 
 # =========================
 # INVESTMENT DETAILS
@@ -170,7 +170,7 @@ weekly_start_nav = 112.30
 
 avg_nav = 117.70
 
-total_units = 35902.41
+total_units = 35689.71
 
 total_investment = (
     total_units * avg_nav
