@@ -204,38 +204,42 @@ investment_duration = (
 # =========================
 # PORTFOLIO HOLDINGS
 # =========================
+# Updated to match latest factsheet disclosure (equity holdings only;
+# Triparty Repo / cash-equivalent and Net Receivables/(Payables) lines
+# are excluded since they aren't tradable equity tickers).
 
 stocks = [
 
-    ("PAYTM", 7.34),
-    ("KALYANKJIL", 6.34),
-    ("COFORGE", 6.04),
-    ("ETERNAL", 5.96),
-    ("KEI", 5.61),
-    ("ABCAPITAL", 5.49),
-    ("PERSISTENT", 4.59),
-    ("GROWW", 4.56),
-    ("SHRIRAMFIN", 3.78),
-    ("BSE", 3.61),
-    ("MCX", 3.48),
-    ("TIINDIA", 3.44),
-    ("DIXON", 3.26),
-    ("PRESTIGE", 3.10),
-    ("BHARTIHEXA", 2.97),
-    ("MAXHEALTH", 2.80),
-    ("LTF", 2.77),
-    ("SUZLON", 2.47),
-    ("POLICYBZR", 2.35),
-    ("ICICIAMC", 2.25),
+    ("KALYANKJIL", 8.87),
+    ("PAYTM", 8.08),
+    ("ETERNAL", 6.37),
+    ("COFORGE", 5.58),
+    ("ABCAPITAL", 5.20),
+    ("KEI", 4.81),
+    ("PERSISTENT", 4.75),
+    ("GROWW", 4.08),
+    ("SHRIRAMFIN", 3.75),
+    ("DIXON", 3.48),
+    ("MCX", 2.90),
+    ("TIINDIA", 2.83),
+    ("BSE", 2.73),
+    ("STLTECH", 2.66),
+    ("PRESTIGE", 2.58),
+    ("LTF", 2.55),
+    ("BHARTIHEXA", 2.55),
+    ("SUZLON", 2.34),
     ("IDFCFIRSTB", 2.25),
-    ("BEL", 2.21),
-    ("MOTHERSON", 2.20),
-    ("PREMIERENE", 2.19),
-    ("WAAREEENER", 1.91),
-    ("INDIGO", 1.68),
-    ("AUBANK", 0.99),
-    ("STLTECH", 0.91),
-    ("PWL", 0.57),
+    ("MAXHEALTH", 2.20),
+    ("POLICYBZR", 2.16),
+    ("PREMIERENE", 2.15),
+    ("MOTHERSON", 2.09),
+    ("ICICIAMC", 1.98),
+    ("BEL", 1.90),
+    ("INDIGO", 1.83),
+    ("WAAREEENER", 1.63),
+    ("ADANIENT", 0.91),
+    ("PWL", 0.60),
+    ("AUBANK", 0.06),
 
 ]
 
@@ -245,7 +249,7 @@ stocks = [
 #
 # NOTE ON THE "None" BUG (earlier fix):
 # The original code called yf.Ticker(...).history() separately for each
-# of the 29 symbols, one after another. Yahoo Finance occasionally
+# of the symbols, one after another. Yahoo Finance occasionally
 # rate-limits or hiccups on an individual request in that loop, so a
 # random symbol (e.g. COFORGE) would intermittently return empty data
 # and render as None/blank in the table.
