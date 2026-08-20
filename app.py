@@ -417,25 +417,33 @@ def get_quote(ticker):
 
     Live price: most recent 1-minute intraday candle close.
 
-    Previous close: CROSS-VALIDATED between two independent yfinance
-    sources instead of trusting either alone.
-        (a) the last COMPLETE daily bar from a fresh daily-history pull
-        (b) fast_info's own previous_close field
-    These are two separate Yahoo endpoints. If they roughly agree
-    (within CROSSCHECK_GUARD_PCT), that's a good sign and either can be
-    used. If they meaningfully disagree -- which is exactly the failure
-    mode observed for STLTECH, where the daily-bar slice returned a
-    stale 646.00 against an actual previous close of 621.20 -- fast_info
-    is preferred, since it mirrors the same previous-close field Yahoo's
-    own quote page displays, and the mismatch is flagged in the source
-    tag so it's visible in the debug panel rather than silently wrong.
+    Previous close: fixed a real bug in this fetch (found from the
+    PERSISTENT case: app showed prev close 5442.50 vs the actual
+    5510.00). The old code picked the previous-close bar BY POSITION
+    (daily_closes.iloc[-2]), assuming the daily-history response always
+    ends with [..., yesterday, today]. That assumption breaks whenever
+    Yahoo hasn't yet appended today's bar (common earlier in the IST
+    trading session) -- the response then ends with [..., day-before-
+    yesterday, yesterday], and iloc[-2] silently grabs day-before-
+    yesterday's close instead of yesterday's. That's a stale-by-one-day
+    previous close with no error raised.
+
+    Fix: select the previous-close bar BY DATE instead of by position --
+    the last bar whose date is strictly before today (IST) is the
+    previous close, whether that's iloc[-1] or iloc[-2].
+
+    This is then CROSS-VALIDATED against fast_info's own previous_close
+    field (a separate Yahoo endpoint). Close agreement (within
+    CROSSCHECK_GUARD_PCT) confirms the value; disagreement beyond that
+    triggers a fallback preference for fast_info, tagged in the source
+    so it's visible in the debug panel rather than silently wrong.
     Returns (prev_close, live_price, source_tag) or (None, None, None).
     """
     live_price = None
     prev_close = None
     source = "yfinance-intraday"
 
-    CROSSCHECK_GUARD_PCT = 2.0
+    CROSSCHECK_GUARD_PCT = 1.0
 
     try:
         t = yf.Ticker(ticker)
@@ -447,16 +455,20 @@ def get_quote(ticker):
             if len(closes) >= 1:
                 live_price = float(closes.iloc[-1])
 
-        # --- PREVIOUS CLOSE, SOURCE (a): last complete daily bar ---
+        # --- PREVIOUS CLOSE, SOURCE (a): last daily bar dated BEFORE today (IST) ---
         prev_close_daily = None
         daily = t.history(period="5d", interval="1d")
         if not daily.empty:
-            daily_closes = daily["Close"].dropna()
-            if len(daily_closes) >= 2:
-                prev_close_daily = float(daily_closes.iloc[-2])
-            elif len(daily_closes) == 1:
-                # Only today's bar exists so far (e.g. pre-market).
-                prev_close_daily = None
+            daily = daily["Close"].dropna()
+            today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+            # Bar index may be tz-aware (exchange tz) or naive depending
+            # on yfinance version -- normalize to a plain date for
+            # comparison either way.
+            prior_day_closes = daily[
+                daily.index.map(lambda ts: ts.date() < today_ist)
+            ]
+            if len(prior_day_closes) >= 1:
+                prev_close_daily = float(prior_day_closes.iloc[-1])
 
         # --- PREVIOUS CLOSE, SOURCE (b): fast_info ---
         prev_close_fastinfo = None
