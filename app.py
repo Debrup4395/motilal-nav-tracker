@@ -115,6 +115,12 @@ div[data-testid="metric-container"] label {
     margin-top: 20px;
 }
 
+.source-tag {
+    font-size: 11px;
+    color: #94a3b8;
+    font-style: italic;
+}
+
 .stButton>button {
     border-radius: 12px;
     height: 50px;
@@ -247,56 +253,78 @@ stocks = [
 # FETCH LIVE DATA
 # =========================
 #
-# NOTE ON THE "None" BUG (earlier fix):
-# The original code called yf.Ticker(...).history() separately for each
-# of the symbols, one after another. Yahoo Finance occasionally
-# rate-limits or hiccups on an individual request in that loop, so a
-# random symbol (e.g. COFORGE) would intermittently return empty data
-# and render as None/blank in the table.
+# CHANGE LOG (most recent fix at top):
 #
-# NOTE ON THE "WRONG PRICE / WRONG %" BUG (previous fix):
-# An earlier version pulled "Previous Close" from a batched daily-bar
-# download (yf.download) and "Live Price" from a separate fast_info call,
-# which could desync (previous close shifted back an extra day).
+# FIX: "PREVIOUS CLOSE JUMPS AROUND MID-SESSION" BUG
+# Symptom: a stock's Previous Close would read one value on one refresh
+# and a materially different value (e.g. 4-5% different) a few refreshes
+# later, even though Previous Close is a FIXED number until the market
+# closes for the day -- it cannot legitimately change intraday. This
+# caused wrong % Change and wrong NAV Impact for that stock (STLTECH
+# showing prev close 646.00 when the actual value was ~621, was one
+# observed case).
 #
-# NOTE ON THE "PRICE STILL WRONG AFTER THE 1m-BAR FIX" BUG (THIS fix):
-# Switching Live Price from fast_info to a 1-minute intraday candle
-# helped for some symbols, but for others (e.g. KALYANKJIL showing
-# 571.40 vs the broker's 598.00, a ~4.7% gap, WHILE Previous Close
-# matched exactly at 569.50) the gap remained. That combination --
-# correct previous close, wrong live price -- means the problem isn't
-# how the code reads Yahoo's data anymore, it's that Yahoo's own feed
-# for a chunk of NSE mid/small-caps is genuinely stale at the source.
-# No amount of restructuring the yfinance call can fix data Yahoo
-# itself hasn't refreshed yet.
+# Root cause: whichever source answered for that symbol on that
+# particular 15-second refresh (NSE primary, or one of the yfinance
+# fallbacks) occasionally returned a stale/cached previousClose, and
+# the code trusted it blindly with no cross-check against what it had
+# already fetched moments earlier.
 #
-# REAL FIX: pull the LIVE PRICE directly from NSE India's own quote API
-# (nseindia.com) -- the exchange's own feed, which is the same
-# ultimate source your broker app's numbers come from. This is far
-# more current than Yahoo for NSE names. yfinance (1-minute bar, then
-# fast_info, then daily-bar batch) is kept as a fallback chain only for
-# when NSE's site is unreachable or rate-limits a request.
+# Real fix, two parts:
+#   1) SOURCE TRACKING: every row now records which feed produced it
+#      (NSE / yfinance-intraday / yfinance-daily-batch / cached), shown
+#      in a "Source" column and in a debug expander. This makes it
+#      possible to see, per stock, which feed is misbehaving instead of
+#      guessing.
+#   2) STALENESS GUARD: previous_close is only accepted as a fresh
+#      update if it's within STALE_GUARD_PCT of the last known-good
+#      previous_close already stored in session_state for that symbol.
+#      If a newly-fetched previous_close deviates more than that
+#      (a real previous close should NOT move once the day's session
+#      state has it), the fetch is treated as bad data and the code
+#      falls back to the last known-good value instead of overwriting
+#      it. The very first fetch of the day for a symbol has nothing to
+#      compare against yet, so it's accepted as-is and becomes the
+#      baseline for that guard going forward.
 #
-# IMPORTANT CAVEATS (read before assuming this is 100% fixed):
+# EARLIER FIXES (kept for context):
+# - Per-symbol yf.Ticker().history() loops occasionally returned empty
+#   data for a random symbol due to Yahoo rate-limiting -> None/blank
+#   rows. Fixed by adding cached fallbacks + last-good-data reuse.
+# - Live Price and Previous Close being pulled from two different,
+#   desynced yfinance calls -> fixed by sourcing both from the same
+#   history() pull where possible.
+# - Yahoo's own feed is generically stale for a chunk of NSE mid/small
+#   caps -> primary source switched to NSE India's own quote-equity API,
+#   with yfinance kept only as a fallback chain.
+#
+# IMPORTANT CAVEATS (still apply):
 # 1) NSE's website uses bot-detection (cookies + browser-like headers
-#    are required, done below via a persistent requests.Session). If
-#    NSE tightens that detection, or blocks the IP range Streamlit
-#    Cloud runs on, these calls can start failing -- in which case the
-#    code will silently drop back to the yfinance chain, and you'll
-#    see Yahoo-level accuracy again, not an error.
-# 2) NSE's own site quote still isn't literally the same millisecond
-#    tick your broker terminal shows (broker apps often have a direct
-#    licensed exchange feed), but it is materially closer than Yahoo.
-# 3) I could not execute/test this against the live NSE API from this
-#    environment (network access here is restricted to package
+#    required). If NSE tightens detection or blocks Streamlit Cloud's
+#    IP range, calls fail silently and the code drops to the yfinance
+#    fallback chain (now visible via the Source column).
+# 2) NSE's own site quote is still not the literal same-millisecond
+#    tick a broker terminal shows, but is materially closer than Yahoo.
+# 3) This could not be executed/tested against the live NSE API from
+#    this environment (network access here is restricted to package
 #    registries only) -- please deploy and check it actually returns
-#    data for your account/region before relying on it.
+#    data for your account/region, and watch the Source column on
+#    first run to confirm NSE is actually being hit rather than falling
+#    back on every symbol.
+
+STALE_GUARD_PCT = 3.0  # max allowed jump in previous_close vs last known-good, in %
 
 if "last_good_data" not in st.session_state:
     st.session_state["last_good_data"] = {}
 
 if "last_good_time" not in st.session_state:
     st.session_state["last_good_time"] = {}
+
+if "last_good_prev_close" not in st.session_state:
+    # Tracks the last ACCEPTED previous_close per symbol, used solely
+    # for the staleness guard (separate from last_good_data, which
+    # stores the full display row).
+    st.session_state["last_good_prev_close"] = {}
 
 if "nse_session" not in st.session_state:
     st.session_state["nse_session"] = None
@@ -335,7 +363,9 @@ def get_nse_session():
 def get_nse_quote(symbol):
     """PRIMARY live-quote source: NSE India's own quote-equity API.
     This is the exchange's own feed rather than a third-party mirror,
-    so it doesn't carry Yahoo's staleness for lower-liquidity names."""
+    so it doesn't carry Yahoo's staleness for lower-liquidity names.
+    Returns (prev_close, live_price, source_tag) or (None, None, None).
+    """
     session = get_nse_session()
     url = f"https://www.nseindia.com/api/quote-equity?symbol={symbol}"
     try:
@@ -349,10 +379,10 @@ def get_nse_quote(symbol):
         live_price = price_info.get("lastPrice")
         prev_close = price_info.get("previousClose")
         if live_price and prev_close:
-            return float(prev_close), float(live_price)
+            return float(prev_close), float(live_price), "NSE"
     except Exception:
         pass
-    return None, None
+    return None, None, None
 
 
 @st.cache_data(ttl=10, show_spinner=False)
@@ -373,15 +403,17 @@ def fetch_batch_data(tickers):
 def get_quote(ticker):
     """
     FALLBACK live-quote source (used only if NSE's API failed for this
-    symbol this refresh cycle). Same logic as before:
+    symbol this refresh cycle).
 
     Live price: most recent 1-minute intraday candle close.
     Previous close: last COMPLETE daily bar from a fresh daily-history
     pull (not a cached quote field), so it can't desync from live price.
     fast_info is used only as a last-resort fallback for either value.
+    Returns (prev_close, live_price, source_tag) or (None, None, None).
     """
     live_price = None
     prev_close = None
+    source = "yfinance-intraday"
 
     try:
         t = yf.Ticker(ticker)
@@ -415,14 +447,15 @@ def get_quote(ticker):
                     or fi.get("previousClose")
                     or fi.get("regular_market_previous_close")
                 )
+            source = "yfinance-fastinfo"
 
         if live_price and prev_close:
-            return float(prev_close), float(live_price)
+            return float(prev_close), float(live_price), source
 
     except Exception:
         pass
 
-    return None, None
+    return None, None, None
 
 
 def get_prev_close_fallback(ticker, batch_data):
@@ -457,6 +490,33 @@ def get_live_price_fallback(ticker, batch_data):
     return None
 
 
+def validate_prev_close(symbol, prev_close):
+    """
+    STALENESS GUARD: previous_close must not legitimately change once
+    accepted for the trading day. If a freshly-fetched prev_close
+    differs from the last accepted value for this symbol by more than
+    STALE_GUARD_PCT, reject it (return the last known-good value
+    instead) so a stale/bad feed can't corrupt % Change and NAV Impact.
+    The first fetch of the day for a symbol has nothing to compare
+    against, so it is accepted as the new baseline.
+    """
+    last_good = st.session_state["last_good_prev_close"].get(symbol)
+
+    if last_good is None:
+        st.session_state["last_good_prev_close"][symbol] = prev_close
+        return prev_close, True
+
+    deviation_pct = abs(prev_close - last_good) / last_good * 100
+
+    if deviation_pct > STALE_GUARD_PCT:
+        # Reject: looks like a stale/bad previous_close from this cycle's
+        # source. Keep using the last known-good value instead.
+        return last_good, False
+
+    st.session_state["last_good_prev_close"][symbol] = prev_close
+    return prev_close, True
+
+
 rows = []
 
 total_weighted_return = 0
@@ -469,12 +529,12 @@ for symbol, weight in stocks:
     ticker = symbol + ".NS"
 
     # PRIMARY: NSE India's own quote API -- see get_nse_quote() docstring
-    prev_close, live_price = get_nse_quote(symbol)
+    prev_close, live_price, source = get_nse_quote(symbol)
 
     # FALLBACK 1: yfinance 1m intraday bar / fast_info -- only if NSE
     # gave us nothing at all for this symbol this cycle
     if prev_close is None or live_price is None:
-        prev_close, live_price = get_quote(ticker)
+        prev_close, live_price, source = get_quote(ticker)
 
     # FALLBACK 2: batched daily-bar download -- only if BOTH of the
     # above failed entirely for this symbol
@@ -489,9 +549,16 @@ for symbol, weight in stocks:
             prev_close = get_prev_close_fallback(ticker, batch_data)
         if live_price is None:
             live_price = get_live_price_fallback(ticker, batch_data)
+        source = "yfinance-daily-batch"
 
     if prev_close is not None and live_price is not None:
-        # Good data this refresh -> compute and remember it
+
+        # --- STALENESS GUARD: reject an implausible previous_close jump ---
+        validated_prev_close, accepted = validate_prev_close(symbol, prev_close)
+        if not accepted:
+            source = f"{source} (rejected, using last-good)"
+        prev_close = validated_prev_close
+
         change_pct = (
             (live_price - prev_close)
             / prev_close
@@ -512,6 +579,7 @@ for symbol, weight in stocks:
             round(live_price, 2),
             round(change_pct, 2),
             round(nav_impact, 4),
+            source,
         ]
 
         st.session_state["last_good_data"][symbol] = row
@@ -531,7 +599,7 @@ for symbol, weight in stocks:
         else:
             # First-ever load and even the retry failed -> show 0s,
             # not None, so formatting never breaks
-            row = [symbol, weight, 0, 0, 0, 0]
+            row = [symbol, weight, 0, 0, 0, 0, "no data"]
 
     rows.append(row)
 
@@ -550,7 +618,8 @@ df = pd.DataFrame(
         "Previous Close",
         "Live Price",
         "% Change",
-        "NAV Impact"
+        "NAV Impact",
+        "Source",
 
     ]
 
@@ -806,6 +875,18 @@ with col13:
 st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
+# DEBUG: DATA SOURCE PER STOCK
+# (lets you see at a glance which feed served each row, and spot any
+#  "rejected, using last-good" tags if the staleness guard fires)
+# =========================
+
+with st.expander("🛠️ Debug: Data source per stock", expanded=False):
+    st.dataframe(
+        df[["Stock", "Previous Close", "Live Price", "Source"]],
+        use_container_width=True
+    )
+
+# =========================
 # EMAIL & WHATSAPP SECTION
 # =========================
 
@@ -866,15 +947,15 @@ col_email, col_phone = st.columns(2)
 with col_email:
     st.markdown("#### 📧 Send via Email")
     recipient_email = st.text_input("Recipient Email", placeholder="example@gmail.com")
-    
+
     # Email configuration (You need to set these in Streamlit secrets or environment variables)
     sender_email = st.text_input("Your Email (Gmail)", placeholder="your-email@gmail.com")
-    sender_password = st.text_input("App Password", type="password", 
+    sender_password = st.text_input("App Password", type="password",
                                    help="Use Gmail App Password, not your regular password")
 
 with col_phone:
     st.markdown("#### 📱 Send via WhatsApp")
-    phone_number = st.text_input("Phone Number (with country code)", 
+    phone_number = st.text_input("Phone Number (with country code)",
                                  placeholder="+911234567890",
                                  help="Format: +91XXXXXXXXXX (India)")
 
@@ -898,21 +979,21 @@ def send_email(sender, password, recipient, subject, body):
         msg['From'] = sender
         msg['To'] = recipient
         msg['Subject'] = subject
-        
+
         msg.attach(MIMEText(body, 'plain'))
-        
+
         # Connect to Gmail SMTP server
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(sender, password)
-        
+
         # Send email
         text = msg.as_string()
         server.sendmail(sender, recipient, text)
         server.quit()
-        
+
         return True, "Email sent successfully! ✅"
-    
+
     except Exception as e:
         return False, f"Failed to send email: {str(e)}"
 
@@ -923,13 +1004,13 @@ def send_email(sender, password, recipient, subject, body):
 def generate_whatsapp_link(phone, message):
     # Remove '+' and any spaces from phone number
     clean_phone = phone.replace('+', '').replace(' ', '').replace('-', '')
-    
+
     # URL encode the message
     encoded_message = urllib.parse.quote(message)
-    
+
     # Generate WhatsApp link
     whatsapp_url = f"https://wa.me/{clean_phone}?text={encoded_message}"
-    
+
     return whatsapp_url
 
 # =========================
@@ -942,9 +1023,9 @@ if send_email_btn:
     else:
         with st.spinner("Sending email..."):
             subject = f"Motilal Oswal Midcap Fund Update - {datetime.now().strftime('%d %b %Y')}"
-            success, message = send_email(sender_email, sender_password, recipient_email, 
+            success, message = send_email(sender_email, sender_password, recipient_email,
                                          subject, message_content)
-            
+
             if success:
                 st.success(message)
             else:
