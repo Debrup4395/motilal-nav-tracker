@@ -364,7 +364,11 @@ def get_nse_quote(symbol):
     """PRIMARY live-quote source: NSE India's own quote-equity API.
     This is the exchange's own feed rather than a third-party mirror,
     so it doesn't carry Yahoo's staleness for lower-liquidity names.
-    Returns (prev_close, live_price, source_tag) or (None, None, None).
+    Returns (prev_close, live_price, source_tag, error_reason).
+    error_reason is None on success, otherwise a short string explaining
+    why NSE didn't return usable data -- surfaced in the debug panel so
+    it's visible WHY the app fell back to yfinance instead of failing
+    silently.
     """
     session = get_nse_session()
     url = f"https://www.nseindia.com/api/quote-equity?symbol={symbol}"
@@ -374,15 +378,21 @@ def get_nse_quote(symbol):
             # Cookies likely expired -- refresh once and retry.
             session.get("https://www.nseindia.com", timeout=5)
             resp = session.get(url, timeout=5)
+        if resp.status_code != 200:
+            return None, None, None, f"HTTP {resp.status_code}"
         data = resp.json()
         price_info = data.get("priceInfo", {})
         live_price = price_info.get("lastPrice")
         prev_close = price_info.get("previousClose")
         if live_price and prev_close:
-            return float(prev_close), float(live_price), "NSE"
-    except Exception:
-        pass
-    return None, None, None
+            return float(prev_close), float(live_price), "NSE", None
+        return None, None, None, "missing priceInfo fields (likely bot-blocked page)"
+    except ValueError:
+        return None, None, None, "non-JSON response (likely bot-block HTML page)"
+    except requests.exceptions.Timeout:
+        return None, None, None, "timeout"
+    except Exception as e:
+        return None, None, None, f"{type(e).__name__}"
 
 
 @st.cache_data(ttl=10, show_spinner=False)
@@ -406,14 +416,26 @@ def get_quote(ticker):
     symbol this refresh cycle).
 
     Live price: most recent 1-minute intraday candle close.
-    Previous close: last COMPLETE daily bar from a fresh daily-history
-    pull (not a cached quote field), so it can't desync from live price.
-    fast_info is used only as a last-resort fallback for either value.
+
+    Previous close: CROSS-VALIDATED between two independent yfinance
+    sources instead of trusting either alone.
+        (a) the last COMPLETE daily bar from a fresh daily-history pull
+        (b) fast_info's own previous_close field
+    These are two separate Yahoo endpoints. If they roughly agree
+    (within CROSSCHECK_GUARD_PCT), that's a good sign and either can be
+    used. If they meaningfully disagree -- which is exactly the failure
+    mode observed for STLTECH, where the daily-bar slice returned a
+    stale 646.00 against an actual previous close of 621.20 -- fast_info
+    is preferred, since it mirrors the same previous-close field Yahoo's
+    own quote page displays, and the mismatch is flagged in the source
+    tag so it's visible in the debug panel rather than silently wrong.
     Returns (prev_close, live_price, source_tag) or (None, None, None).
     """
     live_price = None
     prev_close = None
     source = "yfinance-intraday"
+
+    CROSSCHECK_GUARD_PCT = 2.0
 
     try:
         t = yf.Ticker(ticker)
@@ -425,29 +447,53 @@ def get_quote(ticker):
             if len(closes) >= 1:
                 live_price = float(closes.iloc[-1])
 
-        # --- PREVIOUS CLOSE: last complete daily bar ---
+        # --- PREVIOUS CLOSE, SOURCE (a): last complete daily bar ---
+        prev_close_daily = None
         daily = t.history(period="5d", interval="1d")
         if not daily.empty:
             daily_closes = daily["Close"].dropna()
             if len(daily_closes) >= 2:
-                prev_close = float(daily_closes.iloc[-2])
+                prev_close_daily = float(daily_closes.iloc[-2])
             elif len(daily_closes) == 1:
-                # Only today's bar exists so far (e.g. pre-market) --
-                # let the fast_info fallback below try to fill this in.
-                prev_close = None
+                # Only today's bar exists so far (e.g. pre-market).
+                prev_close_daily = None
 
-        # --- FALLBACK: fast_info, only for whichever value is still missing ---
-        if live_price is None or prev_close is None:
-            fi = t.fast_info
-            if live_price is None:
-                live_price = fi.get("last_price") or fi.get("lastPrice")
-            if prev_close is None:
-                prev_close = (
-                    fi.get("previous_close")
-                    or fi.get("previousClose")
-                    or fi.get("regular_market_previous_close")
-                )
+        # --- PREVIOUS CLOSE, SOURCE (b): fast_info ---
+        prev_close_fastinfo = None
+        fi = t.fast_info
+        prev_close_fastinfo = (
+            fi.get("previous_close")
+            or fi.get("previousClose")
+            or fi.get("regular_market_previous_close")
+        )
+        if prev_close_fastinfo is not None:
+            prev_close_fastinfo = float(prev_close_fastinfo)
+
+        # --- CROSS-VALIDATE the two previous-close sources ---
+        if prev_close_daily is not None and prev_close_fastinfo is not None:
+            deviation_pct = (
+                abs(prev_close_daily - prev_close_fastinfo)
+                / prev_close_fastinfo
+                * 100
+            )
+            if deviation_pct <= CROSSCHECK_GUARD_PCT:
+                prev_close = prev_close_daily
+                source = "yfinance-daily"
+            else:
+                # Disagreement -- trust fast_info (matches Yahoo's own
+                # displayed previous close) and flag the mismatch.
+                prev_close = prev_close_fastinfo
+                source = "yfinance-fastinfo (daily-bar mismatch)"
+        elif prev_close_fastinfo is not None:
+            prev_close = prev_close_fastinfo
             source = "yfinance-fastinfo"
+        elif prev_close_daily is not None:
+            prev_close = prev_close_daily
+            source = "yfinance-daily (unconfirmed)"
+
+        # --- FALLBACK: fast_info for live price only, if still missing ---
+        if live_price is None:
+            live_price = fi.get("last_price") or fi.get("lastPrice")
 
         if live_price and prev_close:
             return float(prev_close), float(live_price), source
@@ -524,12 +570,19 @@ total_weighted_return = 0
 # Only pull the fallback daily-bar batch if we actually end up needing it
 batch_data = None
 
+# Per-symbol NSE failure reasons, shown in the debug panel so it's
+# visible WHY NSE isn't being used (e.g. blocked from this host's IP)
+# instead of just silently falling back to yfinance every cycle.
+nse_errors = {}
+
 for symbol, weight in stocks:
 
     ticker = symbol + ".NS"
 
     # PRIMARY: NSE India's own quote API -- see get_nse_quote() docstring
-    prev_close, live_price, source = get_nse_quote(symbol)
+    prev_close, live_price, source, nse_error = get_nse_quote(symbol)
+    if nse_error:
+        nse_errors[symbol] = nse_error
 
     # FALLBACK 1: yfinance 1m intraday bar / fast_info -- only if NSE
     # gave us nothing at all for this symbol this cycle
@@ -885,6 +938,24 @@ with st.expander("🛠️ Debug: Data source per stock", expanded=False):
         df[["Stock", "Previous Close", "Live Price", "Source"]],
         use_container_width=True
     )
+
+    if nse_errors:
+        st.markdown("**NSE fetch failures this cycle:**")
+        nse_error_df = pd.DataFrame(
+            [{"Stock": s, "NSE Error": e} for s, e in nse_errors.items()]
+        )
+        st.dataframe(nse_error_df, use_container_width=True)
+        st.caption(
+            "If every symbol shows an error here (especially "
+            "'non-JSON response' or 'HTTP 403'), NSE is very likely "
+            "blocking requests from this host's IP address -- common on "
+            "Streamlit Community Cloud. In that case the app is running "
+            "entirely on the yfinance fallback chain, and the "
+            "daily-bar-vs-fast_info cross-check above is your main "
+            "defense against a bad previous close."
+        )
+    else:
+        st.caption("NSE responded successfully for all symbols this cycle.")
 
 # =========================
 # EMAIL & WHATSAPP SECTION
