@@ -417,33 +417,28 @@ def get_quote(ticker):
 
     Live price: most recent 1-minute intraday candle close.
 
-    Previous close: fixed a real bug in this fetch (found from the
-    PERSISTENT case: app showed prev close 5442.50 vs the actual
-    5510.00). The old code picked the previous-close bar BY POSITION
-    (daily_closes.iloc[-2]), assuming the daily-history response always
-    ends with [..., yesterday, today]. That assumption breaks whenever
-    Yahoo hasn't yet appended today's bar (common earlier in the IST
-    trading session) -- the response then ends with [..., day-before-
-    yesterday, yesterday], and iloc[-2] silently grabs day-before-
-    yesterday's close instead of yesterday's. That's a stale-by-one-day
-    previous close with no error raised.
+    Previous close: SOURCE PRIORITY FLIPPED based on real evidence.
+    fast_info's previous_close has now matched the true previous close
+    (confirmed against TradingView/Yahoo's own page) in every case
+    observed so far -- PERSISTENT (5510.00) and STLTECH (621.50/621.20)
+    both came from fast_info after the earlier daily-bar bug was found.
+    The manually-sliced daily-bar value, even after fixing its
+    date-selection bug, is still a second Yahoo code path with its own
+    independent staleness risk. So fast_info is now PRIMARY for every
+    stock, not just the ones that happened to trip a mismatch guard.
+    The daily-bar value is still fetched and compared purely as a
+    confirmation signal (shown in Source): if it agrees with fast_info,
+    that's a "confirmed" tag; the underlying number itself never
+    changes based on that agreement, so behavior is consistent across
+    every row instead of only kicking in on outliers.
 
-    Fix: select the previous-close bar BY DATE instead of by position --
-    the last bar whose date is strictly before today (IST) is the
-    previous close, whether that's iloc[-1] or iloc[-2].
-
-    This is then CROSS-VALIDATED against fast_info's own previous_close
-    field (a separate Yahoo endpoint). Close agreement (within
-    CROSSCHECK_GUARD_PCT) confirms the value; disagreement beyond that
-    triggers a fallback preference for fast_info, tagged in the source
-    so it's visible in the debug panel rather than silently wrong.
     Returns (prev_close, live_price, source_tag) or (None, None, None).
     """
     live_price = None
     prev_close = None
     source = "yfinance-intraday"
 
-    CROSSCHECK_GUARD_PCT = 1.0
+    CONFIRM_GUARD_PCT = 1.0
 
     try:
         t = yf.Ticker(ticker)
@@ -455,7 +450,18 @@ def get_quote(ticker):
             if len(closes) >= 1:
                 live_price = float(closes.iloc[-1])
 
-        # --- PREVIOUS CLOSE, SOURCE (a): last daily bar dated BEFORE today (IST) ---
+        # --- PREVIOUS CLOSE, PRIMARY: fast_info ---
+        prev_close_fastinfo = None
+        fi = t.fast_info
+        prev_close_fastinfo = (
+            fi.get("previous_close")
+            or fi.get("previousClose")
+            or fi.get("regular_market_previous_close")
+        )
+        if prev_close_fastinfo is not None:
+            prev_close_fastinfo = float(prev_close_fastinfo)
+
+        # --- PREVIOUS CLOSE, CONFIRMATION ONLY: last daily bar dated BEFORE today (IST) ---
         prev_close_daily = None
         daily = t.history(period="5d", interval="1d")
         if not daily.empty:
@@ -470,38 +476,26 @@ def get_quote(ticker):
             if len(prior_day_closes) >= 1:
                 prev_close_daily = float(prior_day_closes.iloc[-1])
 
-        # --- PREVIOUS CLOSE, SOURCE (b): fast_info ---
-        prev_close_fastinfo = None
-        fi = t.fast_info
-        prev_close_fastinfo = (
-            fi.get("previous_close")
-            or fi.get("previousClose")
-            or fi.get("regular_market_previous_close")
-        )
+        # --- ASSIGN: fast_info is primary for every stock ---
         if prev_close_fastinfo is not None:
-            prev_close_fastinfo = float(prev_close_fastinfo)
-
-        # --- CROSS-VALIDATE the two previous-close sources ---
-        if prev_close_daily is not None and prev_close_fastinfo is not None:
-            deviation_pct = (
-                abs(prev_close_daily - prev_close_fastinfo)
-                / prev_close_fastinfo
-                * 100
-            )
-            if deviation_pct <= CROSSCHECK_GUARD_PCT:
-                prev_close = prev_close_daily
-                source = "yfinance-daily"
-            else:
-                # Disagreement -- trust fast_info (matches Yahoo's own
-                # displayed previous close) and flag the mismatch.
-                prev_close = prev_close_fastinfo
-                source = "yfinance-fastinfo (daily-bar mismatch)"
-        elif prev_close_fastinfo is not None:
             prev_close = prev_close_fastinfo
-            source = "yfinance-fastinfo"
+            if prev_close_daily is not None:
+                deviation_pct = (
+                    abs(prev_close_daily - prev_close_fastinfo)
+                    / prev_close_fastinfo
+                    * 100
+                )
+                if deviation_pct <= CONFIRM_GUARD_PCT:
+                    source = "yfinance-fastinfo (confirmed)"
+                else:
+                    source = "yfinance-fastinfo (daily-bar disagreed)"
+            else:
+                source = "yfinance-fastinfo"
         elif prev_close_daily is not None:
+            # fast_info unavailable this cycle -- fall back to the
+            # date-aware daily-bar value rather than having no data.
             prev_close = prev_close_daily
-            source = "yfinance-daily (unconfirmed)"
+            source = "yfinance-daily (fastinfo unavailable)"
 
         # --- FALLBACK: fast_info for live price only, if still missing ---
         if live_price is None:
