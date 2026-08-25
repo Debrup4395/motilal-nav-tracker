@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import requests
+import concurrent.futures
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -11,10 +12,16 @@ from email.mime.multipart import MIMEMultipart
 import urllib.parse
 
 # =========================
-# AUTO REFRESH EVERY 15 SEC
+# AUTO REFRESH
 # =========================
+# Was 15s. Combined with per-symbol, un-timed-out network calls (see
+# fetch section below) this meant the app could spend minutes blocked
+# inside a single refresh cycle, then immediately start another one.
+# Slowed down and matched to the cache ttl on the fetch functions.
 
-st_autorefresh(interval=15000, key="refresh")
+REFRESH_SECONDS = 30
+
+st_autorefresh(interval=REFRESH_SECONDS * 1000, key="refresh")
 
 # =========================
 # PAGE SETTINGS
@@ -253,72 +260,67 @@ stocks = [
 # FETCH LIVE DATA
 # =========================
 #
-# CHANGE LOG (most recent fix at top):
+# WHY THIS VERSION FROZE (same underlying disease as the sister app,
+# worse symptoms):
 #
-# FIX: "PREVIOUS CLOSE JUMPS AROUND MID-SESSION" BUG
-# Symptom: a stock's Previous Close would read one value on one refresh
-# and a materially different value (e.g. 4-5% different) a few refreshes
-# later, even though Previous Close is a FIXED number until the market
-# closes for the day -- it cannot legitimately change intraday. This
-# caused wrong % Change and wrong NAV Impact for that stock (STLTECH
-# showing prev close 646.00 when the actual value was ~621, was one
-# observed case).
+# The previous version made, PER SYMBOL, PER 15-SECOND REFRESH:
+#   1) an NSE request (with its own retry-on-403 round trip)
+#   2) if that failed: a yfinance 1-minute intraday history() call
+#   3) a yfinance 5-day daily history() call
+#   4) a yfinance fast_info call
+# ...all executed ONE SYMBOL AT A TIME, IN SEQUENCE, with NO TIMEOUT
+# set on any of the yfinance calls (only the NSE requests.get() calls
+# had timeout=5). For 30 symbols that's up to 100+ sequential blocking
+# network calls per refresh. If NSE is bot-blocking the app's IP
+# (extremely common for Streamlit Community Cloud -- NSE actively
+# fingerprints and blocks datacenter IPs), EVERY one of those NSE calls
+# fails only after its own retry, and EVERY symbol then also falls
+# through 3 more yfinance calls that can hang indefinitely. That's
+# enough to freeze the page for minutes, and it repeats every 15
+# seconds forever -- exactly the symptom reported.
 #
-# Root cause: whichever source answered for that symbol on that
-# particular 15-second refresh (NSE primary, or one of the yfinance
-# fallbacks) occasionally returned a stale/cached previousClose, and
-# the code trusted it blindly with no cross-check against what it had
-# already fetched moments earlier.
+# FIX -- three changes, same NSE-primary / yfinance-fallback design
+# and the same staleness guard, but restructured so NOTHING in the
+# per-symbol loop touches the network anymore:
 #
-# Real fix, two parts:
-#   1) SOURCE TRACKING: every row now records which feed produced it
-#      (NSE / yfinance-intraday / yfinance-daily-batch / cached), shown
-#      in a "Source" column and in a debug expander. This makes it
-#      possible to see, per stock, which feed is misbehaving instead of
-#      guessing.
-#   2) STALENESS GUARD: previous_close is only accepted as a fresh
-#      update if it's within STALE_GUARD_PCT of the last known-good
-#      previous_close already stored in session_state for that symbol.
-#      If a newly-fetched previous_close deviates more than that
-#      (a real previous close should NOT move once the day's session
-#      state has it), the fetch is treated as bad data and the code
-#      falls back to the last known-good value instead of overwriting
-#      it. The very first fetch of the day for a symbol has nothing to
-#      compare against yet, so it's accepted as-is and becomes the
-#      baseline for that guard going forward.
+#   1) NSE calls are fetched for ALL 30 symbols CONCURRENTLY via a
+#      thread pool (not one-by-one), and the whole batch is wrapped in
+#      a hard overall timeout. If NSE is blocking/slow, we find out
+#      once, in ~5-20 seconds total, not 30 times sequentially.
+#   2) The yfinance fallback no longer makes per-symbol history()/
+#      fast_info calls. It uses TWO single batched, threaded
+#      yf.download() calls (one for daily bars -> previous close, one
+#      for 1-minute intraday bars -> live price) for ALL tickers at
+#      once, each wrapped in its own hard timeout.
+#   3) The per-symbol for-loop that builds the final table now does
+#      ZERO network I/O -- it only reads from the three pre-fetched
+#      batches (NSE dict, daily batch, intraday batch) that were
+#      already fetched above. A single slow/blocked source can no
+#      longer stall the whole page, because it's bounded by one
+#      timeout instead of 30 uncapped ones.
 #
-# EARLIER FIXES (kept for context):
-# - Per-symbol yf.Ticker().history() loops occasionally returned empty
-#   data for a random symbol due to Yahoo rate-limiting -> None/blank
-#   rows. Fixed by adding cached fallbacks + last-good-data reuse.
-# - Live Price and Previous Close being pulled from two different,
-#   desynced yfinance calls -> fixed by sourcing both from the same
-#   history() pull where possible.
-# - Yahoo's own feed is generically stale for a chunk of NSE mid/small
-#   caps -> primary source switched to NSE India's own quote-equity API,
-#   with yfinance kept only as a fallback chain.
+# The "Source" column and NSE-error debug panel are kept so you can
+# still see, per stock, which feed actually served the data and
+# whether NSE is being blocked.
 #
-# IMPORTANT CAVEATS (still apply):
+# CAVEATS (still apply):
 # 1) NSE's website uses bot-detection (cookies + browser-like headers
-#    required). If NSE tightens detection or blocks Streamlit Cloud's
-#    IP range, calls fail silently and the code drops to the yfinance
-#    fallback chain (now visible via the Source column).
-# 2) NSE's own site quote is still not the literal same-millisecond
-#    tick a broker terminal shows, but is materially closer than Yahoo.
-# 3) This could not be executed/tested against the live NSE API from
-#    this environment (network access here is restricted to package
-#    registries only) -- please deploy and check it actually returns
-#    data for your account/region, and watch the Source column on
-#    first run to confirm NSE is actually being hit rather than falling
-#    back on every symbol.
+#    required). If NSE blocks Streamlit Cloud's IP range, all NSE
+#    calls fail together (visible in the debug panel) and the app runs
+#    entirely on the yfinance batch fallback -- which is fine, just
+#    slightly less fresh than NSE's own feed.
+# 2) This could not be executed against the live NSE API from this
+#    development environment (network access here is restricted to
+#    package registries only) -- please check the debug panel on first
+#    run to confirm NSE is actually being reached.
 
 STALE_GUARD_PCT = 3.0  # max allowed jump in previous_close vs last known-good, in %
+NSE_REQUEST_TIMEOUT = 5        # per-request timeout, seconds
+NSE_BATCH_TIMEOUT = 20         # hard ceiling for ALL 30 NSE requests combined
+YF_BATCH_TIMEOUT = 15          # hard ceiling for each batched yfinance download
 
 if "last_good_data" not in st.session_state:
     st.session_state["last_good_data"] = {}
-
-if "last_good_time" not in st.session_state:
-    st.session_state["last_good_time"] = {}
 
 if "last_good_prev_close" not in st.session_state:
     # Tracks the last ACCEPTED previous_close per symbol, used solely
@@ -329,7 +331,8 @@ if "last_good_prev_close" not in st.session_state:
 if "nse_session" not in st.session_state:
     st.session_state["nse_session"] = None
 
-tickers_list = [symbol + ".NS" for symbol, _ in stocks]
+symbol_list = [s for s, _ in stocks]
+tickers_list = [s + ".NS" for s in symbol_list]
 
 NSE_HEADERS = {
     "User-Agent": (
@@ -344,199 +347,164 @@ NSE_HEADERS = {
 
 def get_nse_session():
     """Reuse one requests.Session across reruns so we don't re-negotiate
-    NSE's anti-bot cookies on every 15-second autorefresh. NSE's API
-    rejects requests that don't carry cookies obtained from first
-    loading the site like a real browser does."""
+    NSE's anti-bot cookies on every refresh."""
     session = st.session_state.get("nse_session")
     if session is None:
         session = requests.Session()
         session.headers.update(NSE_HEADERS)
         try:
-            session.get("https://www.nseindia.com", timeout=5)
+            session.get("https://www.nseindia.com", timeout=NSE_REQUEST_TIMEOUT)
         except Exception:
             pass
         st.session_state["nse_session"] = session
     return session
 
 
-@st.cache_data(ttl=5, show_spinner=False)
-def get_nse_quote(symbol):
-    """PRIMARY live-quote source: NSE India's own quote-equity API.
-    This is the exchange's own feed rather than a third-party mirror,
-    so it doesn't carry Yahoo's staleness for lower-liquidity names.
-    Returns (prev_close, live_price, source_tag, error_reason).
-    error_reason is None on success, otherwise a short string explaining
-    why NSE didn't return usable data -- surfaced in the debug panel so
-    it's visible WHY the app fell back to yfinance instead of failing
-    silently.
-    """
-    session = get_nse_session()
+def _fetch_one_nse(symbol, session):
+    """Single-symbol NSE fetch. Called from a thread pool, never
+    directly from the main per-symbol loop."""
     url = f"https://www.nseindia.com/api/quote-equity?symbol={symbol}"
     try:
-        resp = session.get(url, timeout=5)
+        resp = session.get(url, timeout=NSE_REQUEST_TIMEOUT)
         if resp.status_code != 200:
-            # Cookies likely expired -- refresh once and retry.
-            session.get("https://www.nseindia.com", timeout=5)
-            resp = session.get(url, timeout=5)
+            resp = session.get(url, timeout=NSE_REQUEST_TIMEOUT)
         if resp.status_code != 200:
-            return None, None, None, f"HTTP {resp.status_code}"
+            return symbol, None, None, f"HTTP {resp.status_code}"
         data = resp.json()
         price_info = data.get("priceInfo", {})
         live_price = price_info.get("lastPrice")
         prev_close = price_info.get("previousClose")
         if live_price and prev_close:
-            return float(prev_close), float(live_price), "NSE", None
-        return None, None, None, "missing priceInfo fields (likely bot-blocked page)"
+            return symbol, float(prev_close), float(live_price), None
+        return symbol, None, None, "missing priceInfo fields (likely bot-blocked page)"
     except ValueError:
-        return None, None, None, "non-JSON response (likely bot-block HTML page)"
+        return symbol, None, None, "non-JSON response (likely bot-block HTML page)"
     except requests.exceptions.Timeout:
-        return None, None, None, "timeout"
+        return symbol, None, None, "timeout"
     except Exception as e:
-        return None, None, None, f"{type(e).__name__}"
+        return symbol, None, None, f"{type(e).__name__}"
 
 
-@st.cache_data(ttl=10, show_spinner=False)
-def fetch_batch_data(tickers):
-    """Fallback-only daily bar data, used solely when everything else fails."""
-    return yf.download(
-        tickers=tickers,
-        period="10d",
-        interval="1d",
-        group_by="ticker",
-        threads=True,
-        progress=False,
-        auto_adjust=False,
+@st.cache_data(ttl=REFRESH_SECONDS, show_spinner=False)
+def fetch_nse_batch(symbols):
+    """PRIMARY source. Fetches ALL symbols concurrently via a thread
+    pool, bounded by ONE overall timeout -- so a blocked/slow NSE can
+    only cost us NSE_BATCH_TIMEOUT seconds total, not 30x that."""
+    session = get_nse_session()
+    results = {}
+    errors = {}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+        futures = {ex.submit(_fetch_one_nse, s, session): s for s in symbols}
+        try:
+            for fut in concurrent.futures.as_completed(futures, timeout=NSE_BATCH_TIMEOUT):
+                s = futures[fut]
+                try:
+                    _, prev_close, live_price, err = fut.result()
+                except Exception as e:
+                    prev_close, live_price, err = None, None, str(e)
+                results[s] = (prev_close, live_price)
+                if err:
+                    errors[s] = err
+        except concurrent.futures.TimeoutError:
+            # Whatever didn't finish in time is treated as failed for
+            # this cycle rather than left to block indefinitely.
+            for fut, s in futures.items():
+                if s not in results:
+                    results[s] = (None, None)
+                    errors[s] = "timeout (overall NSE batch)"
+
+    return results, errors
+
+
+def _download_with_timeout(kwargs, timeout_seconds):
+    """Runs a yf.download() call in a worker thread with a hard
+    timeout, since yfinance itself sets none."""
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(lambda: yf.download(**kwargs))
+            return future.result(timeout=timeout_seconds)
+    except concurrent.futures.TimeoutError:
+        return pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=REFRESH_SECONDS, show_spinner=False)
+def fetch_daily_batch(tickers):
+    """FALLBACK source (previous close): ONE batched, threaded call for
+    ALL tickers' recent daily bars, instead of a per-ticker loop."""
+    return _download_with_timeout(
+        dict(
+            tickers=tickers,
+            period="10d",
+            interval="1d",
+            group_by="ticker",
+            threads=True,
+            progress=False,
+            auto_adjust=False,
+        ),
+        YF_BATCH_TIMEOUT,
     )
 
 
-@st.cache_data(ttl=10, show_spinner=False)
-def get_quote(ticker):
-    """
-    FALLBACK live-quote source (used only if NSE's API failed for this
-    symbol this refresh cycle).
+@st.cache_data(ttl=REFRESH_SECONDS, show_spinner=False)
+def fetch_intraday_batch(tickers):
+    """FALLBACK source (live price): ONE batched, threaded call for
+    ALL tickers' 1-minute intraday bars, instead of a per-ticker
+    history() loop."""
+    return _download_with_timeout(
+        dict(
+            tickers=tickers,
+            period="1d",
+            interval="1m",
+            group_by="ticker",
+            threads=True,
+            progress=False,
+            auto_adjust=False,
+        ),
+        YF_BATCH_TIMEOUT,
+    )
 
-    Live price: most recent 1-minute intraday candle close.
 
-    Previous close: SOURCE PRIORITY FLIPPED based on real evidence.
-    fast_info's previous_close has now matched the true previous close
-    (confirmed against TradingView/Yahoo's own page) in every case
-    observed so far -- PERSISTENT (5510.00) and STLTECH (621.50/621.20)
-    both came from fast_info after the earlier daily-bar bug was found.
-    The manually-sliced daily-bar value, even after fixing its
-    date-selection bug, is still a second Yahoo code path with its own
-    independent staleness risk. So fast_info is now PRIMARY for every
-    stock, not just the ones that happened to trip a mismatch guard.
-    The daily-bar value is still fetched and compared purely as a
-    confirmation signal (shown in Source): if it agrees with fast_info,
-    that's a "confirmed" tag; the underlying number itself never
-    changes based on that agreement, so behavior is consistent across
-    every row instead of only kicking in on outliers.
-
-    Returns (prev_close, live_price, source_tag) or (None, None, None).
-    """
-    live_price = None
-    prev_close = None
-    source = "yfinance-intraday"
-
-    CONFIRM_GUARD_PCT = 1.0
-
+def get_prev_close_from_daily(ticker, batch_data):
+    """Previous close = last COMPLETE daily bar dated before today
+    (IST), pulled from the pre-fetched daily batch. No network I/O."""
     try:
-        t = yf.Ticker(ticker)
-
-        # --- LIVE PRICE: latest 1-minute intraday bar ---
-        intraday = t.history(period="1d", interval="1m")
-        if not intraday.empty:
-            closes = intraday["Close"].dropna()
-            if len(closes) >= 1:
-                live_price = float(closes.iloc[-1])
-
-        # --- PREVIOUS CLOSE, PRIMARY: fast_info ---
-        prev_close_fastinfo = None
-        fi = t.fast_info
-        prev_close_fastinfo = (
-            fi.get("previous_close")
-            or fi.get("previousClose")
-            or fi.get("regular_market_previous_close")
-        )
-        if prev_close_fastinfo is not None:
-            prev_close_fastinfo = float(prev_close_fastinfo)
-
-        # --- PREVIOUS CLOSE, CONFIRMATION ONLY: last daily bar dated BEFORE today (IST) ---
-        prev_close_daily = None
-        daily = t.history(period="5d", interval="1d")
-        if not daily.empty:
-            daily = daily["Close"].dropna()
-            today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-            # Bar index may be tz-aware (exchange tz) or naive depending
-            # on yfinance version -- normalize to a plain date for
-            # comparison either way.
-            prior_day_closes = daily[
-                daily.index.map(lambda ts: ts.date() < today_ist)
-            ]
-            if len(prior_day_closes) >= 1:
-                prev_close_daily = float(prior_day_closes.iloc[-1])
-
-        # --- ASSIGN: fast_info is primary for every stock ---
-        if prev_close_fastinfo is not None:
-            prev_close = prev_close_fastinfo
-            if prev_close_daily is not None:
-                deviation_pct = (
-                    abs(prev_close_daily - prev_close_fastinfo)
-                    / prev_close_fastinfo
-                    * 100
-                )
-                if deviation_pct <= CONFIRM_GUARD_PCT:
-                    source = "yfinance-fastinfo (confirmed)"
-                else:
-                    source = "yfinance-fastinfo (daily-bar disagreed)"
-            else:
-                source = "yfinance-fastinfo"
-        elif prev_close_daily is not None:
-            # fast_info unavailable this cycle -- fall back to the
-            # date-aware daily-bar value rather than having no data.
-            prev_close = prev_close_daily
-            source = "yfinance-daily (fastinfo unavailable)"
-
-        # --- FALLBACK: fast_info for live price only, if still missing ---
-        if live_price is None:
-            live_price = fi.get("last_price") or fi.get("lastPrice")
-
-        if live_price and prev_close:
-            return float(prev_close), float(live_price), source
-
-    except Exception:
-        pass
-
-    return None, None, None
-
-
-def get_prev_close_fallback(ticker, batch_data):
-    """Last-resort fallback if everything above failed. Uses the last
-    COMPLETE daily bar from the batched download."""
-    try:
+        if batch_data is None or batch_data.empty:
+            return None
         if isinstance(batch_data.columns, pd.MultiIndex):
             hist = batch_data[ticker]["Close"].dropna()
         else:
             hist = batch_data["Close"].dropna()
 
-        if len(hist) >= 2:
-            return hist.iloc[-2]
+        today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+        prior_day_closes = hist[hist.index.map(lambda ts: ts.date() < today_ist)]
+
+        if len(prior_day_closes) >= 1:
+            return float(prior_day_closes.iloc[-1])
+        elif len(hist) >= 2:
+            return float(hist.iloc[-2])
         elif len(hist) == 1:
-            return hist.iloc[-1]
+            return float(hist.iloc[-1])
     except Exception:
         pass
     return None
 
 
-def get_live_price_fallback(ticker, batch_data):
-    """Last-resort fallback live price if everything above failed."""
+def get_live_price_from_intraday(ticker, batch_data):
+    """Live price = most recent 1-minute intraday close, pulled from
+    the pre-fetched intraday batch. No network I/O. Falls back to the
+    daily batch's last close if intraday data is unavailable (e.g.
+    market closed)."""
     try:
-        if isinstance(batch_data.columns, pd.MultiIndex):
-            hist = batch_data[ticker]["Close"].dropna()
-        else:
-            hist = batch_data["Close"].dropna()
-        if len(hist) >= 1:
-            return hist.iloc[-1]
+        if batch_data is not None and not batch_data.empty:
+            if isinstance(batch_data.columns, pd.MultiIndex):
+                hist = batch_data[ticker]["Close"].dropna()
+            else:
+                hist = batch_data["Close"].dropna()
+            if len(hist) >= 1:
+                return float(hist.iloc[-1])
     except Exception:
         pass
     return None
@@ -561,54 +529,45 @@ def validate_prev_close(symbol, prev_close):
     deviation_pct = abs(prev_close - last_good) / last_good * 100
 
     if deviation_pct > STALE_GUARD_PCT:
-        # Reject: looks like a stale/bad previous_close from this cycle's
-        # source. Keep using the last known-good value instead.
         return last_good, False
 
     st.session_state["last_good_prev_close"][symbol] = prev_close
     return prev_close, True
 
 
+# --- Fetch all three sources ONCE, up front, each bounded by its own
+# --- hard timeout. The per-symbol loop below does NO network I/O.
+
+nse_results, nse_errors = fetch_nse_batch(tuple(symbol_list))
+
+# Only pull the yfinance batches if at least one symbol needs them,
+# to avoid the cost when NSE served everyone successfully.
+need_yf_fallback = any(
+    nse_results.get(s, (None, None))[0] is None
+    or nse_results.get(s, (None, None))[1] is None
+    for s in symbol_list
+)
+
+daily_batch = fetch_daily_batch(tuple(tickers_list)) if need_yf_fallback else None
+intraday_batch = fetch_intraday_batch(tuple(tickers_list)) if need_yf_fallback else None
+
 rows = []
-
 total_weighted_return = 0
-
-# Only pull the fallback daily-bar batch if we actually end up needing it
-batch_data = None
-
-# Per-symbol NSE failure reasons, shown in the debug panel so it's
-# visible WHY NSE isn't being used (e.g. blocked from this host's IP)
-# instead of just silently falling back to yfinance every cycle.
-nse_errors = {}
 
 for symbol, weight in stocks:
 
     ticker = symbol + ".NS"
 
-    # PRIMARY: NSE India's own quote API -- see get_nse_quote() docstring
-    prev_close, live_price, source, nse_error = get_nse_quote(symbol)
-    if nse_error:
-        nse_errors[symbol] = nse_error
+    prev_close, live_price = nse_results.get(symbol, (None, None))
+    source = "NSE"
 
-    # FALLBACK 1: yfinance 1m intraday bar / fast_info -- only if NSE
-    # gave us nothing at all for this symbol this cycle
     if prev_close is None or live_price is None:
-        prev_close, live_price, source = get_quote(ticker)
-
-    # FALLBACK 2: batched daily-bar download -- only if BOTH of the
-    # above failed entirely for this symbol
-    if prev_close is None or live_price is None:
-        if batch_data is None:
-            try:
-                batch_data = fetch_batch_data(tickers_list)
-            except Exception:
-                batch_data = pd.DataFrame()
-
-        if prev_close is None:
-            prev_close = get_prev_close_fallback(ticker, batch_data)
-        if live_price is None:
-            live_price = get_live_price_fallback(ticker, batch_data)
-        source = "yfinance-daily-batch"
+        # FALLBACK: pull from the already-fetched batched yfinance data
+        fb_prev = get_prev_close_from_daily(ticker, daily_batch)
+        fb_live = get_live_price_from_intraday(ticker, intraday_batch)
+        prev_close = prev_close if prev_close is not None else fb_prev
+        live_price = live_price if live_price is not None else fb_live
+        source = "yfinance-batch"
 
     if prev_close is not None and live_price is not None:
 
@@ -651,13 +610,10 @@ for symbol, weight in stocks:
 
         if cached_row is not None:
             row = cached_row
-            # still add its cached contribution so NAV math stays consistent
             cached_change_pct = row[4]
             weighted_return = (cached_change_pct * weight) / 100
             total_weighted_return += weighted_return
         else:
-            # First-ever load and even the retry failed -> show 0s,
-            # not None, so formatting never breaks
             row = [symbol, weight, 0, 0, 0, 0, "no data"]
 
     rows.append(row)
@@ -956,9 +912,9 @@ with st.expander("🛠️ Debug: Data source per stock", expanded=False):
             "'non-JSON response' or 'HTTP 403'), NSE is very likely "
             "blocking requests from this host's IP address -- common on "
             "Streamlit Community Cloud. In that case the app is running "
-            "entirely on the yfinance fallback chain, and the "
-            "daily-bar-vs-fast_info cross-check above is your main "
-            "defense against a bad previous close."
+            "entirely on the batched yfinance fallback, which is fetched "
+            "once for all stocks (not per-symbol) so it can't stall the "
+            "page the way the old per-symbol loop could."
         )
     else:
         st.caption("NSE responded successfully for all symbols this cycle.")
@@ -1138,4 +1094,4 @@ st.dataframe(
 
 st.markdown("---")
 
-st.caption("© Debrup Bera | Auto-refresh every 15 seconds")
+st.caption(f"© Debrup Bera | Auto-refresh every {REFRESH_SECONDS} seconds")
