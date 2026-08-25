@@ -19,7 +19,7 @@ import urllib.parse
 # inside a single refresh cycle, then immediately start another one.
 # Slowed down and matched to the cache ttl on the fetch functions.
 
-REFRESH_SECONDS = 30
+REFRESH_SECONDS = 10
 
 st_autorefresh(interval=REFRESH_SECONDS * 1000, key="refresh")
 
