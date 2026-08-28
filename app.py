@@ -448,6 +448,76 @@ def fetch_nse_batch(symbols):
     return results, errors
 
 
+def _fetch_one_yf_quote(ticker):
+    """Single-symbol Yahoo QUOTE fetch via fast_info (not our own
+    historical-bar derivation). Called from a thread pool, never
+    directly from the main per-symbol loop.
+
+    Correction on what this actually is: fast_info.previousClose is
+    NOT a raw untouched field straight off Yahoo's servers -- under
+    the hood it's still derived (yfinance groups a week of hourly
+    pre/post-market bars by calendar date and takes the second-to-
+    last day's close), with a genuine fallback to Yahoo's quote-
+    summary "previousClose" field if that derivation comes up empty.
+    So it's yfinance's OWN tested, maintained derivation, not our
+    homegrown one -- which combined two separately-fetched batch
+    downloads (10d daily + 1d intraday) and tried to reconcile them
+    ourselves. That reconciliation is what was landing on the wrong
+    bar for at least PERSISTENT. Using yfinance's built-in logic here
+    is a materially different, better-tested code path, but it's
+    still a derivation, not a guarantee -- if a ticker is still wrong
+    after this change, the debug panel's Source column will say which
+    tier actually served it, which is the fastest way to narrow down
+    where it's still going wrong.
+    """
+    try:
+        t = yf.Ticker(ticker)
+        fi = t.fast_info
+        prev_close = fi.get("previousClose") or fi.get("regularMarketPreviousClose")
+        live_price = (
+            fi.get("lastPrice")
+            or fi.get("last_price")
+            or fi.get("regularMarketPrice")
+        )
+        if prev_close and live_price:
+            return ticker, float(prev_close), float(live_price), None
+        return ticker, None, None, "missing fast_info fields"
+    except Exception as e:
+        return ticker, None, None, f"{type(e).__name__}"
+
+
+@st.cache_data(ttl=REFRESH_SECONDS, show_spinner=False)
+def fetch_yf_quote_batch(tickers):
+    """TIER 2 (secondary) source, used when NSE fails. Fetches ALL
+    tickers' live quote fields (previousClose, lastPrice) CONCURRENTLY
+    via a thread pool, bounded by ONE overall timeout -- same pattern
+    as the NSE batch, so a slow/blocked ticker can only cost us
+    YF_BATCH_TIMEOUT seconds total, not 30x that, and this can never
+    fall back into the old one-symbol-at-a-time-with-no-timeout bug."""
+    results = {}
+    errors = {}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
+        futures = {ex.submit(_fetch_one_yf_quote, t): t for t in tickers}
+        try:
+            for fut in concurrent.futures.as_completed(futures, timeout=YF_BATCH_TIMEOUT):
+                t = futures[fut]
+                try:
+                    _, prev_close, live_price, err = fut.result()
+                except Exception as e:
+                    prev_close, live_price, err = None, None, str(e)
+                results[t] = (prev_close, live_price)
+                if err:
+                    errors[t] = err
+        except concurrent.futures.TimeoutError:
+            for fut, t in futures.items():
+                if t not in results:
+                    results[t] = (None, None)
+                    errors[t] = "timeout (overall yfinance quote batch)"
+
+    return results, errors
+
+
 def _download_with_timeout(kwargs, timeout_seconds):
     """Runs a yf.download() call in a worker thread with a hard
     timeout, since yfinance itself sets none."""
@@ -463,8 +533,12 @@ def _download_with_timeout(kwargs, timeout_seconds):
 
 @st.cache_data(ttl=REFRESH_SECONDS, show_spinner=False)
 def fetch_daily_batch(tickers):
-    """FALLBACK source (previous close): ONE batched, threaded call for
-    ALL tickers' recent daily bars, instead of a per-ticker loop."""
+    """TIER 3 (last-resort) source for previous close: ONE batched,
+    threaded call for ALL tickers' recent daily bars, instead of a
+    per-ticker loop. Only used if BOTH NSE and the Yahoo quote batch
+    (Tier 2) fail for a symbol -- prefer Tier 2 whenever possible,
+    since deriving previous-close from historical candles ourselves
+    is exactly what caused the earlier bug."""
     return _download_with_timeout(
         dict(
             tickers=tickers,
@@ -605,15 +679,18 @@ def validate_prev_close(symbol, prev_close, source):
          day always re-seeds the baseline from the first fresh value
          seen that day, instead of carrying forward an arbitrarily old
          one.
-      2) NSE's own previousClose is trusted outright and skips the
-         guard entirely -- it's the authoritative exchange value, so
-         there's nothing to validate it against. The guard now only
-         protects the yfinance FALLBACK path, which is the one that
-         can occasionally hand back a half-populated bar.
+      2) NSE's own previousClose, and Yahoo's own quote previousClose
+         (Tier 2, "yfinance-quote"), are both trusted outright and
+         skip the guard entirely -- they're authoritative values
+         straight from the exchange/vendor, not something we compute,
+         so there's nothing to validate them against. The guard now
+         only protects the Tier 3 "yfinance-daily-derived" path,
+         which is the one that derives previous-close from historical
+         candles ourselves and can occasionally land on a bad bar.
     """
     today_str = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
 
-    if source == "NSE":
+    if source in ("NSE", "yfinance-quote"):
         st.session_state["last_good_prev_close"][symbol] = {
             "date": today_str,
             "value": prev_close,
@@ -644,21 +721,46 @@ def validate_prev_close(symbol, prev_close, source):
     return prev_close, True
 
 
-# --- Fetch all three sources ONCE, up front, each bounded by its own
-# --- hard timeout. The per-symbol loop below does NO network I/O.
+# --- Fetch all sources ONCE, up front, each bounded by its own hard
+# --- timeout. The per-symbol loop below does NO network I/O.
+#
+# Three tiers now, tried in order per symbol:
+#   1) NSE                     -- exchange's own numbers directly
+#   2) Yahoo quote (fast_info)  -- Yahoo's own stated previousClose/
+#                                  lastPrice, same "authoritative
+#                                  field, not derived by us" category
+#                                  as NSE
+#   3) Yahoo historical bars    -- last resort only: WE derive
+#      (daily/intraday)          previous close ourselves from candle
+#                                 history. This is the path that was
+#                                 producing the wrong PERSISTENT number,
+#                                 so it's now only reached if both NSE
+#                                 and the Yahoo quote batch fail for a
+#                                 symbol.
 
 nse_results, nse_errors = fetch_nse_batch(tuple(symbol_list))
 
-# Only pull the yfinance batches if at least one symbol needs them,
-# to avoid the cost when NSE served everyone successfully.
-need_yf_fallback = any(
+need_tier2 = any(
     nse_results.get(s, (None, None))[0] is None
     or nse_results.get(s, (None, None))[1] is None
     for s in symbol_list
 )
 
-daily_batch = fetch_daily_batch(tuple(tickers_list)) if need_yf_fallback else None
-intraday_batch = fetch_intraday_batch(tuple(tickers_list)) if need_yf_fallback else None
+yf_quote_results, yf_quote_errors = (
+    fetch_yf_quote_batch(tuple(tickers_list)) if need_tier2 else ({}, {})
+)
+
+need_tier3 = any(
+    (nse_results.get(s, (None, None))[0] is None or nse_results.get(s, (None, None))[1] is None)
+    and (
+        yf_quote_results.get(s + ".NS", (None, None))[0] is None
+        or yf_quote_results.get(s + ".NS", (None, None))[1] is None
+    )
+    for s in symbol_list
+)
+
+daily_batch = fetch_daily_batch(tuple(tickers_list)) if need_tier3 else None
+intraday_batch = fetch_intraday_batch(tuple(tickers_list)) if need_tier3 else None
 
 rows = []
 total_weighted_return = 0
@@ -671,12 +773,19 @@ for symbol, weight in stocks:
     source = "NSE"
 
     if prev_close is None or live_price is None:
-        # FALLBACK: pull from the already-fetched batched yfinance data
+        # TIER 2: Yahoo's own quote fields for this ticker.
+        q_prev, q_live = yf_quote_results.get(ticker, (None, None))
+        prev_close = prev_close if prev_close is not None else q_prev
+        live_price = live_price if live_price is not None else q_live
+        source = "yfinance-quote"
+
+    if prev_close is None or live_price is None:
+        # TIER 3 (last resort): derive from historical candles.
         fb_prev = get_prev_close_from_daily(ticker, daily_batch, intraday_batch)
         fb_live = get_live_price_from_intraday(ticker, intraday_batch)
         prev_close = prev_close if prev_close is not None else fb_prev
         live_price = live_price if live_price is not None else fb_live
-        source = "yfinance-batch"
+        source = "yfinance-daily-derived"
 
     if prev_close is not None and live_price is not None:
 
@@ -1020,13 +1129,25 @@ with st.expander("🛠️ Debug: Data source per stock", expanded=False):
             "If every symbol shows an error here (especially "
             "'non-JSON response' or 'HTTP 403'), NSE is very likely "
             "blocking requests from this host's IP address -- common on "
-            "Streamlit Community Cloud. In that case the app is running "
-            "entirely on the batched yfinance fallback, which is fetched "
-            "once for all stocks (not per-symbol) so it can't stall the "
-            "page the way the old per-symbol loop could."
+            "Streamlit Community Cloud. In that case the app runs on "
+            "Yahoo's own quote fields instead (Source column shows "
+            "'yfinance-quote') -- fetched once for all stocks, not "
+            "per-symbol, so it can't stall the page the way the old "
+            "per-symbol loop could. 'yfinance-daily-derived' in the "
+            "Source column means even Yahoo's quote fields failed for "
+            "that symbol and it fell back to candle-derived data, "
+            "which is the least reliable tier -- that's worth "
+            "investigating for that specific ticker if you see it."
         )
     else:
         st.caption("NSE responded successfully for all symbols this cycle.")
+
+    if 'yf_quote_errors' in dir() and yf_quote_errors:
+        st.markdown("**Yahoo quote (Tier 2) failures this cycle:**")
+        yf_error_df = pd.DataFrame(
+            [{"Ticker": t, "Error": e} for t, e in yf_quote_errors.items()]
+        )
+        st.dataframe(yf_error_df, use_container_width=True)
 
 # =========================
 # EMAIL & WHATSAPP SECTION
