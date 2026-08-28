@@ -220,6 +220,9 @@ investment_duration = (
 # Updated to match latest factsheet disclosure (equity holdings only;
 # Triparty Repo / cash-equivalent and Net Receivables/(Payables) lines
 # are excluded since they aren't tradable equity tickers).
+#
+# Verified against NSE: "PWL" is PhysicsWallah Ltd (correct symbol,
+# not a typo) -- if you were suspecting a bad ticker there, it's fine.
 
 stocks = [
 
@@ -303,6 +306,31 @@ stocks = [
 # still see, per stock, which feed actually served the data and
 # whether NSE is being blocked.
 #
+# ---------------------------------------------------------------
+# WHY PRICES WERE SHOWING WRONG (this revision's fix):
+#
+# The staleness guard on `previous_close` -- meant to reject a single
+# corrupted fetch -- was keyed ONLY by symbol, with NO notion of
+# "today". Once it locked onto a baseline value for a symbol, that
+# baseline sat in st.session_state and was never reset at the start of
+# a new trading day. On a long-running Streamlit Cloud instance, that
+# baseline could be several days old. Any freshly-fetched (correct)
+# previous_close that differed from that stale baseline by MORE than
+# STALE_GUARD_PCT (3%) was rejected and the old, wrong value kept
+# being reused -- silently, with no error shown. That's exactly what
+# was happening to PERSISTENT: its live/previous-close numbers didn't
+# match the real market because the guard was defending a stale
+# baseline instead of the truth.
+#
+# Fixed by:
+#   1) Keying the guard by (symbol, date) so the baseline auto-resets
+#      every trading day instead of persisting indefinitely.
+#   2) Only applying the guard to the yfinance FALLBACK path. NSE's
+#      own `previousClose` field comes straight from the exchange and
+#      is authoritative -- there's nothing to validate it against, and
+#      running it through a same-symbol guard was the exact mechanism
+#      that let a stale value get "defended" over real data.
+#
 # CAVEATS (still apply):
 # 1) NSE's website uses bot-detection (cookies + browser-like headers
 #    required). If NSE blocks Streamlit Cloud's IP range, all NSE
@@ -314,7 +342,7 @@ stocks = [
 #    package registries only) -- please check the debug panel on first
 #    run to confirm NSE is actually being reached.
 
-STALE_GUARD_PCT = 3.0  # max allowed jump in previous_close vs last known-good, in %
+STALE_GUARD_PCT = 3.0  # max allowed jump in previous_close vs last known-good, in % (yfinance fallback only)
 NSE_REQUEST_TIMEOUT = 5        # per-request timeout, seconds
 NSE_BATCH_TIMEOUT = 20         # hard ceiling for ALL 30 NSE requests combined
 YF_BATCH_TIMEOUT = 15          # hard ceiling for each batched yfinance download
@@ -323,9 +351,12 @@ if "last_good_data" not in st.session_state:
     st.session_state["last_good_data"] = {}
 
 if "last_good_prev_close" not in st.session_state:
-    # Tracks the last ACCEPTED previous_close per symbol, used solely
-    # for the staleness guard (separate from last_good_data, which
-    # stores the full display row).
+    # Tracks the last ACCEPTED previous_close per symbol, keyed as
+    # {symbol: {"date": "YYYY-MM-DD", "value": float}}, used solely
+    # for the staleness guard on the yfinance FALLBACK path (separate
+    # from last_good_data, which stores the full display row). The
+    # "date" field is what makes the baseline reset every trading day
+    # instead of persisting stale for as long as the server stays warm.
     st.session_state["last_good_prev_close"] = {}
 
 if "nse_session" not in st.session_state:
@@ -510,28 +541,61 @@ def get_live_price_from_intraday(ticker, batch_data):
     return None
 
 
-def validate_prev_close(symbol, prev_close):
+def validate_prev_close(symbol, prev_close, source):
     """
-    STALENESS GUARD: previous_close must not legitimately change once
-    accepted for the trading day. If a freshly-fetched prev_close
-    differs from the last accepted value for this symbol by more than
-    STALE_GUARD_PCT, reject it (return the last known-good value
-    instead) so a stale/bad feed can't corrupt % Change and NAV Impact.
-    The first fetch of the day for a symbol has nothing to compare
-    against, so it is accepted as the new baseline.
-    """
-    last_good = st.session_state["last_good_prev_close"].get(symbol)
+    STALENESS GUARD -- rewritten to fix the wrong-price bug.
 
-    if last_good is None:
-        st.session_state["last_good_prev_close"][symbol] = prev_close
+    Previously this was keyed only by `symbol`, with no notion of
+    "today". Once a baseline value was accepted for a symbol it lived
+    in st.session_state indefinitely (Streamlit Cloud instances can
+    stay warm for days). Any later, CORRECT previous_close that
+    happened to differ from that stale baseline by more than
+    STALE_GUARD_PCT was silently rejected in favour of the old value
+    -- so a bad or outdated baseline could "win" forever. That's what
+    was producing incorrect Previous Close / % Change / NAV Impact
+    numbers (most visibly on PERSISTENT).
+
+    Fix, two parts:
+      1) The baseline is now keyed by (symbol, date). A new trading
+         day always re-seeds the baseline from the first fresh value
+         seen that day, instead of carrying forward an arbitrarily old
+         one.
+      2) NSE's own previousClose is trusted outright and skips the
+         guard entirely -- it's the authoritative exchange value, so
+         there's nothing to validate it against. The guard now only
+         protects the yfinance FALLBACK path, which is the one that
+         can occasionally hand back a half-populated bar.
+    """
+    today_str = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+
+    if source == "NSE":
+        st.session_state["last_good_prev_close"][symbol] = {
+            "date": today_str,
+            "value": prev_close,
+        }
         return prev_close, True
 
+    entry = st.session_state["last_good_prev_close"].get(symbol)
+
+    if entry is None or entry.get("date") != today_str:
+        # First fetch of the (trading) day for this symbol -- nothing
+        # to compare against yet, so accept it as today's baseline.
+        st.session_state["last_good_prev_close"][symbol] = {
+            "date": today_str,
+            "value": prev_close,
+        }
+        return prev_close, True
+
+    last_good = entry["value"]
     deviation_pct = abs(prev_close - last_good) / last_good * 100
 
     if deviation_pct > STALE_GUARD_PCT:
         return last_good, False
 
-    st.session_state["last_good_prev_close"][symbol] = prev_close
+    st.session_state["last_good_prev_close"][symbol] = {
+        "date": today_str,
+        "value": prev_close,
+    }
     return prev_close, True
 
 
@@ -572,7 +636,7 @@ for symbol, weight in stocks:
     if prev_close is not None and live_price is not None:
 
         # --- STALENESS GUARD: reject an implausible previous_close jump ---
-        validated_prev_close, accepted = validate_prev_close(symbol, prev_close)
+        validated_prev_close, accepted = validate_prev_close(symbol, prev_close, source)
         if not accepted:
             source = f"{source} (rejected, using last-good)"
         prev_close = validated_prev_close
