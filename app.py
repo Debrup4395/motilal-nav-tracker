@@ -498,26 +498,71 @@ def fetch_intraday_batch(tickers):
     )
 
 
-def get_prev_close_from_daily(ticker, batch_data):
-    """Previous close = last COMPLETE daily bar dated before today
-    (IST), pulled from the pre-fetched daily batch. No network I/O."""
+def get_prev_close_from_daily(ticker, daily_batch, intraday_batch):
+    """Previous close = last COMPLETE daily bar, pulled from the
+    pre-fetched daily batch. No network I/O.
+
+    IMPORTANT: this used to decide which daily bar was "today's
+    still-forming bar" (and therefore not a valid previous close) by
+    comparing yfinance's own bar timestamps against a SEPARATELY
+    computed `datetime.now(ZoneInfo("Asia/Kolkata")).date()`. Those
+    are two independent sources of "what day is it" -- Python's clock
+    vs. however yfinance/pandas normalized the daily index for this
+    ticker -- and they don't always agree (timezone normalization for
+    .NS daily bars isn't perfectly consistent across yfinance
+    versions/tickers). When they disagreed by a day, this function
+    would either keep today's in-progress bar as "previous close", or
+    skip back an extra day -- both look like "wrong day" bugs from the
+    outside, which is what was happening on PERSISTENT.
+
+    Fixed by never comparing a yfinance date to a Python-clock date.
+    Instead, compare yfinance's daily bar dates to yfinance's OWN
+    intraday bar dates (same source, same normalization), since those
+    two are internally consistent with each other:
+      - If the intraday batch has data whose last date matches the
+        daily batch's last date, the market is (or was very recently)
+        open today, so that last daily row is today's in-progress bar
+        -> drop it, use the row before it as previous close.
+      - Otherwise (no intraday data yet, e.g. pre-market, or dates
+        don't match) the last daily row is already a completed
+        session -> it IS the previous close, use it directly.
+    """
     try:
-        if batch_data is None or batch_data.empty:
+        if daily_batch is None or daily_batch.empty:
             return None
-        if isinstance(batch_data.columns, pd.MultiIndex):
-            hist = batch_data[ticker]["Close"].dropna()
+        if isinstance(daily_batch.columns, pd.MultiIndex):
+            daily_hist = daily_batch[ticker]["Close"].dropna()
         else:
-            hist = batch_data["Close"].dropna()
+            daily_hist = daily_batch["Close"].dropna()
 
-        today_ist = datetime.now(ZoneInfo("Asia/Kolkata")).date()
-        prior_day_closes = hist[hist.index.map(lambda ts: ts.date() < today_ist)]
+        if daily_hist.empty:
+            return None
 
-        if len(prior_day_closes) >= 1:
-            return float(prior_day_closes.iloc[-1])
-        elif len(hist) >= 2:
-            return float(hist.iloc[-2])
-        elif len(hist) == 1:
-            return float(hist.iloc[-1])
+        last_daily_ts = daily_hist.index[-1]
+        last_daily_date = pd.Timestamp(last_daily_ts).date()
+
+        intraday_last_date = None
+        try:
+            if intraday_batch is not None and not intraday_batch.empty:
+                if isinstance(intraday_batch.columns, pd.MultiIndex):
+                    intraday_hist = intraday_batch[ticker]["Close"].dropna()
+                else:
+                    intraday_hist = intraday_batch["Close"].dropna()
+                if len(intraday_hist) >= 1:
+                    intraday_last_date = pd.Timestamp(intraday_hist.index[-1]).date()
+        except Exception:
+            intraday_last_date = None
+
+        if intraday_last_date is not None and last_daily_date == intraday_last_date:
+            # Last daily row is today's in-progress session -> drop it.
+            if len(daily_hist) >= 2:
+                return float(daily_hist.iloc[-2])
+            return None
+
+        # No matching in-progress session detected -> the last daily
+        # row is already a completed trading day, so it IS the
+        # previous close.
+        return float(daily_hist.iloc[-1])
     except Exception:
         pass
     return None
@@ -627,7 +672,7 @@ for symbol, weight in stocks:
 
     if prev_close is None or live_price is None:
         # FALLBACK: pull from the already-fetched batched yfinance data
-        fb_prev = get_prev_close_from_daily(ticker, daily_batch)
+        fb_prev = get_prev_close_from_daily(ticker, daily_batch, intraday_batch)
         fb_live = get_live_price_from_intraday(ticker, intraday_batch)
         prev_close = prev_close if prev_close is not None else fb_prev
         live_price = live_price if live_price is not None else fb_live
