@@ -217,45 +217,54 @@ investment_duration = (
 # =========================
 # PORTFOLIO HOLDINGS
 # =========================
-# Updated to match latest factsheet disclosure (equity holdings only;
-# Triparty Repo / cash-equivalent and Net Receivables/(Payables) lines
-# are excluded since they aren't tradable equity tickers).
+# Updated to Motilal Oswal Midcap Fund's Monthly Portfolio Statement
+# AS ON AUGUST 31, 2026 (equity holdings only; Triparty Repo /
+# cash-equivalent and Net Receivables/(Payables) lines are excluded
+# since they aren't tradable equity tickers).
 #
-# Verified against NSE: "PWL" is PhysicsWallah Ltd (correct symbol,
-# not a typo) -- if you were suspecting a bad ticker there, it's fine.
+# Changes vs. the previous holdings list:
+#   - AU Small Finance Bank (AUBANK) has dropped out of the top-30
+#     holdings and is removed.
+#   - Lenskart Solutions is a new entrant. Verified via NSE: ISIN
+#     INE956O01016 -> NSE symbol "LENSKART" (matches the factsheet's
+#     ISIN for this row exactly).
+#   - "PWL" (PhysicsWallah Ltd) confirmed correct, unchanged.
+#
+# All other tickers unchanged; weights (% to Net Assets) refreshed
+# from the statement.
 
 stocks = [
 
-    ("KALYANKJIL", 8.87),
-    ("PAYTM", 8.08),
-    ("ETERNAL", 6.37),
-    ("COFORGE", 5.58),
-    ("ABCAPITAL", 5.20),
-    ("KEI", 4.81),
-    ("PERSISTENT", 4.75),
-    ("GROWW", 4.08),
-    ("SHRIRAMFIN", 3.75),
-    ("DIXON", 3.48),
-    ("MCX", 2.90),
-    ("TIINDIA", 2.83),
-    ("BSE", 2.73),
-    ("STLTECH", 2.66),
-    ("PRESTIGE", 2.58),
-    ("LTF", 2.55),
-    ("BHARTIHEXA", 2.55),
-    ("SUZLON", 2.34),
-    ("IDFCFIRSTB", 2.25),
-    ("MAXHEALTH", 2.20),
-    ("POLICYBZR", 2.16),
-    ("PREMIERENE", 2.15),
-    ("MOTHERSON", 2.09),
-    ("ICICIAMC", 1.98),
+    ("PAYTM", 9.07),
+    ("KALYANKJIL", 8.13),
+    ("ETERNAL", 6.46),
+    ("COFORGE", 5.79),
+    ("KEI", 5.16),
+    ("ABCAPITAL", 4.87),
+    ("PERSISTENT", 4.41),
+    ("SHRIRAMFIN", 3.66),
+    ("DIXON", 3.44),
+    ("GROWW", 3.43),
+    ("MCX", 3.43),
+    ("STLTECH", 3.30),
+    ("POLICYBZR", 2.85),
+    ("TIINDIA", 2.67),
+    ("LTF", 2.40),
+    ("ICICIAMC", 2.39),
+    ("PRESTIGE", 2.37),
+    ("BHARTIHEXA", 2.27),
+    ("LENSKART", 2.26),
+    ("MOTHERSON", 2.21),
+    ("SUZLON", 2.16),
+    ("IDFCFIRSTB", 2.13),
+    ("PREMIERENE", 2.03),
     ("BEL", 1.90),
-    ("INDIGO", 1.83),
-    ("WAAREEENER", 1.63),
-    ("ADANIENT", 0.91),
-    ("PWL", 0.60),
-    ("AUBANK", 0.06),
+    ("BSE", 1.76),
+    ("INDIGO", 1.73),
+    ("WAAREEENER", 1.48),
+    ("MAXHEALTH", 1.29),
+    ("ADANIENT", 0.81),
+    ("PWL", 0.52),
 
 ]
 
