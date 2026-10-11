@@ -175,7 +175,7 @@ with col_title:
 # MANUAL NAV UPDATE
 # =========================
 
-previous_nav = 116.40
+previous_nav = 114.95
 weekly_start_nav = 120.03
 
 # =========================
@@ -235,36 +235,36 @@ investment_duration = (
 
 stocks = [
 
-    ("PAYTM", 9.07),
-    ("KALYANKJIL", 8.13),
-    ("ETERNAL", 6.46),
-    ("COFORGE", 5.79),
-    ("KEI", 5.16),
-    ("ABCAPITAL", 4.87),
-    ("PERSISTENT", 4.41),
-    ("SHRIRAMFIN", 3.66),
-    ("DIXON", 3.44),
-    ("GROWW", 3.43),
-    ("MCX", 3.43),
-    ("STLTECH", 3.30),
-    ("POLICYBZR", 2.85),
-    ("TIINDIA", 2.67),
-    ("LTF", 2.40),
-    ("ICICIAMC", 2.39),
-    ("PRESTIGE", 2.37),
-    ("BHARTIHEXA", 2.27),
-    ("LENSKART", 2.26),
-    ("MOTHERSON", 2.21),
-    ("SUZLON", 2.16),
-    ("IDFCFIRSTB", 2.13),
-    ("PREMIERENE", 2.03),
-    ("BEL", 1.90),
-    ("BSE", 1.76),
-    ("INDIGO", 1.73),
-    ("WAAREEENER", 1.48),
-    ("MAXHEALTH", 1.29),
-    ("ADANIENT", 0.81),
-    ("PWL", 0.52),
+    ("PAYTM", 8.64),
+    ("KALYANKJIL", 7.98),
+    ("ETERNAL", 6.72),
+    ("COFORGE", 5.43),
+    ("KEI", 4.27),
+    ("ABCAPITAL", 4.64),
+    ("PERSISTENT", 4.43),
+    ("SHRIRAMFIN", 3.40),
+    ("DIXON", 3.43),
+    ("GROWW", 3.50),
+    ("MCX", 3.74),
+    ("STLTECH", 4.40),
+    ("POLICYBZR", 1.72),
+    ("TIINDIA", 2.43),
+    ("LTF", 2.11),
+    ("ICICIAMC", 2.60),
+    ("PRESTIGE", 2.20),
+    ("BHARTIHEXA", 2.23),
+    ("LENSKART", 2.94),
+    ("MOTHERSON", 2.26),
+    ("SUZLON", 1.91),
+    ("IDFCFIRSTB", 2.40),
+    ("PREMIERENE", 1.82),
+    ("BEL", 1.89),
+    ("BSE", 1.75),
+    ("INDIGO", 1.75),
+    ("WAAREEENER", 1.43),
+    ("MAXHEALTH", 1.33),
+    ("ADANIENT", 0.87),
+    ("PWL", 0.59),
 
 ]
 
