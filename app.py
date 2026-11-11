@@ -172,8 +172,8 @@ with col_title:
 # MANUAL NAV UPDATE
 # =========================
 
-previous_nav = 119.1088
-weekly_start_nav = 119.1088   # TODO: set to last week's closing NAV
+previous_nav = 119.11
+weekly_start_nav = 120.03   # TODO: set to last week's closing NAV
 
 # =========================
 # INVESTMENT DETAILS
@@ -841,6 +841,46 @@ col7.metric(
     f"₹{unrealised_pl_amount:,.0f}",
     f"{unrealised_pl_pct:.2f}%"
 )
+
+st.markdown("---")
+
+# =========================
+# PORTFOLIO VALUE (with eye toggle to hide / unhide)
+# =========================
+
+if "show_portfolio_value" not in st.session_state:
+    st.session_state["show_portfolio_value"] = True
+
+current_portfolio_value = total_units * previous_nav
+expected_portfolio_value = total_units * estimated_nav
+portfolio_value_change = expected_portfolio_value - current_portfolio_value
+
+col_pv_title, col_pv_eye = st.columns([8, 1])
+
+with col_pv_title:
+    st.subheader("💎 Portfolio Value")
+
+with col_pv_eye:
+    eye_icon = "👁️" if st.session_state["show_portfolio_value"] else "🙈"
+    if st.button(eye_icon, key="toggle_portfolio_value", help="Hide / show portfolio value"):
+        st.session_state["show_portfolio_value"] = not st.session_state["show_portfolio_value"]
+        st.rerun()
+
+col_pv1, col_pv2 = st.columns(2)
+
+if st.session_state["show_portfolio_value"]:
+    col_pv1.metric(
+        "🏦 Current Portfolio Value",
+        f"₹{current_portfolio_value:,.0f}"
+    )
+    col_pv2.metric(
+        "📊 Expected Portfolio Value",
+        f"₹{expected_portfolio_value:,.0f}",
+        f"{portfolio_value_change:+,.0f} ({total_weighted_return:+.2f}%)"
+    )
+else:
+    col_pv1.metric("🏦 Current Portfolio Value", "₹ ••••••")
+    col_pv2.metric("📊 Expected Portfolio Value", "₹ ••••••")
 
 st.markdown("---")
 
