@@ -172,8 +172,8 @@ with col_title:
 # MANUAL NAV UPDATE
 # =========================
 
-previous_nav = 119.1088
-weekly_start_nav = 119.1088   # TODO: set to last week's closing NAV
+previous_nav = 119.11
+weekly_start_nav = 120.03   # TODO: set to last week's closing NAV
 
 # =========================
 # INVESTMENT DETAILS
@@ -851,9 +851,9 @@ st.markdown("---")
 if "show_portfolio_value" not in st.session_state:
     st.session_state["show_portfolio_value"] = True
 
-current_portfolio_value = total_units * previous_nav
-expected_portfolio_value = total_units * estimated_nav
-portfolio_value_change = expected_portfolio_value - current_portfolio_value
+current_portfolio_value = total_units * avg_nav          # units x buying avg NAV
+expected_portfolio_value = total_units * estimated_nav   # units x live expected NAV
+portfolio_value_change = daily_return_amount             # today's expected move in rupees
 
 col_pv_title, col_pv_eye = st.columns([8, 1])
 
