@@ -172,7 +172,7 @@ with col_title:
 # MANUAL NAV UPDATE
 # =========================
 
-previous_nav = 122.64
+previous_nav = 122.39
 weekly_start_nav = 123.07   # TODO: set to last week's closing NAV
 
 # =========================
@@ -181,7 +181,7 @@ weekly_start_nav = 123.07   # TODO: set to last week's closing NAV
 
 avg_nav = 117.70            # TODO: update if your average cost changed
 
-total_units = 34219.28
+total_units = 34178.00
 
 total_investment = (
     total_units * avg_nav
